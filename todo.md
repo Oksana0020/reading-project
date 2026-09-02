@@ -12,3 +12,13 @@
 - [x] Add unit tests for reading analysis and role-aware data access.
 - [x] Correct guided-session timing so completion reports present a child-friendly reading duration.
 - [x] Validate core interactions, test responsive layouts, and address visual or runtime issues. (Verified child library, read-aloud canvas, guided completion report, educator dashboard, desktop/mobile layouts, unit tests, and type checking.)
+- [x] Extend user identity records with child, teacher, and parent roles and enforce role-aware server access.
+- [x] Create class, child profile, family relationship, reading material, reading session, and generated exercise database models.
+- [x] Add secure seed-ready demo profiles for Amina, Ms Kelly, and Amina’s parent without exposing cross-role records.
+- [x] Build a teacher material upload and text-entry workflow with AI-generated vocabulary and comprehension exercises for review and assignment.
+- [x] Save completed read-aloud sessions, transcript outcomes, supportive interventions, and practice words to the database.
+- [x] Refresh child, teacher, and parent dashboards from authorised persisted records rather than static screen data.
+- [x] Upgrade the read-aloud canvas with clear current-word, retry, self-correction, and stay-silent-for-review demo states.
+- [x] Update the role-selection experience to use account-style login cards rather than a visible demo switcher.
+- [x] Add unit tests for roles, relationship authorisation, session storage, and exercise-generation safeguards.
+- [x] Validate the protected flows, teacher upload/exercise experience, session persistence, and reference-aligned visual upgrades. (Verified type checking, nine unit tests, database migrations, responsive account-entry and library layouts, and a clean post-restart service start.)

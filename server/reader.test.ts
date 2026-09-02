@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { analyseReadingText, mayViewChildProgress, tokenize } from "./reader";
+import { isTeacher } from "./readerDb";
 
 describe("Reader Leader prototype analysis", () => {
   it("tokenizes child-friendly text without punctuation", () => {
@@ -23,5 +24,12 @@ describe("Reader Leader prototype analysis", () => {
     expect(mayViewChildProgress("child", "amina", ["amina"])).toBe(true);
     expect(mayViewChildProgress("parent", "leo", ["amina"])).toBe(false);
     expect(mayViewChildProgress("teacher", "leo", [])).toBe(true);
+  });
+
+  it("recognises only teacher and administrator roles as teacher privileges", () => {
+    expect(isTeacher("teacher")).toBe(true);
+    expect(isTeacher("admin")).toBe(true);
+    expect(isTeacher("parent")).toBe(false);
+    expect(isTeacher("child")).toBe(false);
   });
 });
