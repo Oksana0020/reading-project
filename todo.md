@@ -50,3 +50,21 @@
 - [x] Correct the assigned-passage guided transcript fallback so teacher materials without a built-in demo transcript complete into the child report and quiz.
 - [x] Expose a child-friendly celebration PDF download from the saved-session library view.
 - [x] Correct local teacher and parent demo routing so each account opens its authorised dashboard rather than the child library.
+- [x] Define reading assessment modes and persist mode-specific word states, attempts, retries, and silent review flags.
+- [x] Implement Assisted Practice default behaviour with blue correct text, yellow current word, red correction state, and green self-correction marker.
+- [x] Implement Monthly Assessment behaviour with uninterrupted first-pass tracking, silent mistake logging, and correction-free reporting.
+- [x] Implement Guided Practice behaviour with an automatic model-audio pause after two unsuccessful attempts.
+- [x] Update reading reports with self-correction/retry analysis and mode-specific assessment guidance.
+- [x] Add a visible active-mode badge and replace rigid reading-canvas outer borders with warm rounded panels.
+- [x] Test word-state transitions, retry counts, monthly assessment restrictions, guided model-audio prompts, and mode-specific reports.
+- [x] Make live word-state progression compare each recognised word against the expected passage in every mode, including silent monthly mismatch logging.
+- [x] Complete mode-specific report output for retry/self-correction detail, monthly first-pass metrics, and monthly correction-prompt restrictions.
+- [x] Drive the Guided Practice two-failure pause and model-audio action from live transcript mismatches rather than demonstration controls alone.
+- [x] Add automated and browser checks for Assisted, Guided, and Monthly word-state transitions and reports.
+- [x] Remove live correction-demo controls from Monthly Assessment and use mode-appropriate completion wording.
+- [x] Browser-test Assisted Practice visual transitions and its self-correction/retry report output. (Verified red retry state, green self-correction state, and the retry summary in the completed reading report.)
+- [x] Add deterministic coverage for live transcript mismatch-derived word states and Guided Practice model-audio threshold behaviour. (Verified in the active suite: server/liveWordStates.test.ts; 25 tests passing.)
+- [x] Capture final validation evidence for all three assessment modes and their reports. (Assisted: retry/self-correction report; Guided: two-attempt model prompt; Monthly: quiet first-pass report.)
+- [x] Capture browser evidence of the Assisted Practice yellow current, red retry, and green self-correction visual states.
+- [x] Complete a Guided Practice session after its two-attempt model prompt and capture the resulting retry report.
+- [x] Inspect the Assisted Practice current-word element’s rendered yellow background and underline treatment before final delivery.

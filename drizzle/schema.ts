@@ -90,6 +90,9 @@ export const materialAssignments = mysqlTable("materialAssignments", {
 }, table => [unique("assigned_material_class_unique").on(table.classId, table.materialId)]);
 
 export type StoredIntervention = { word: string; action: "prompt" | "model" | "stay_silent" | "teacher_review"; note: string };
+export const assessmentModeValues = ["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"] as const;
+export type AssessmentMode = (typeof assessmentModeValues)[number];
+export type StoredWordState = { id: string; text: string; status: "unread" | "current" | "correct" | "incorrect" | "retried_correct"; attempts: number };
 
 export const readingSessions = mysqlTable("readingSessions", {
   id: int("id").autoincrement().primaryKey(),
@@ -102,8 +105,10 @@ export const readingSessions = mysqlTable("readingSessions", {
   durationSeconds: int("durationSeconds").notNull(),
   audioStorageKey: varchar("audioStorageKey", { length: 512 }),
   completed: int("completed").notNull().default(1),
+  assessmentMode: mysqlEnum("assessmentMode", assessmentModeValues).notNull().default("ASSISTED_PRACTICE"),
   practiceWords: json("practiceWords").$type<string[]>().notNull(),
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
+  wordStates: json("wordStates").$type<StoredWordState[]>().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

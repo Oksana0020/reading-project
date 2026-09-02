@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyseReadingText, mayViewChildProgress, tokenize } from "./reader";
+import { analyseReadingText, initialiseWordStates, mayViewChildProgress, tokenize } from "./reader";
 import { isTeacher } from "./readerDb";
 
 describe("Reader Leader prototype analysis", () => {
@@ -31,5 +31,32 @@ describe("Reader Leader prototype analysis", () => {
     expect(isTeacher("admin")).toBe(true);
     expect(isTeacher("parent")).toBe(false);
     expect(isTeacher("child")).toBe(false);
+  });
+
+  it("records an assisted-practice self-correction and retry count", () => {
+    const attempts = initialiseWordStates("The glimmered lantern");
+    attempts[1] = { ...attempts[1], attempts: 2, status: "retried_correct" };
+    const result = analyseReadingText("The glimmered lantern", "The glimmered lantern", 30, "ASSISTED_PRACTICE", attempts);
+    expect(result.selfCorrections).toContain("glimmered");
+    expect(result.retrySummary).toContainEqual({ word: "glimmered", retries: 1 });
+    expect(result.wordStates[1].status).toBe("retried_correct");
+  });
+
+  it("keeps monthly assessment feedback silent and scores only the first pass", () => {
+    const attempts = initialiseWordStates("The glimmered lantern");
+    attempts[1] = { ...attempts[1], attempts: 3, status: "retried_correct" };
+    const result = analyseReadingText("The glimmered lantern", "The lantern", 30, "MONTHLY_ASSESSMENT", attempts);
+    expect(result.practiceWords).toEqual([]);
+    expect(result.retrySummary).toEqual([]);
+    expect(result.selfCorrections).toEqual([]);
+    expect(result.events.find(event => event.eventType === "omission")?.action).toBe("teacher_review");
+    expect(result.nextStep).toContain("No correction prompts");
+  });
+
+  it("requests a model word after two guided-practice attempts remain incorrect", () => {
+    const attempts = initialiseWordStates("The glimmered lantern");
+    attempts[1] = { ...attempts[1], attempts: 2, status: "incorrect" };
+    const result = analyseReadingText("The glimmered lantern", "The lantern", 30, "GUIDED_PRACTICE", attempts);
+    expect(result.modelWords).toContain("glimmered");
   });
 });

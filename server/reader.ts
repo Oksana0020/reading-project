@@ -1,122 +1,76 @@
-export type ReadingEventKind = "correct" | "substitution" | "omission" | "insertion" | "repetition";
+import type { AssessmentMode, StoredWordState } from "../drizzle/schema";
 
-export type ReadingEvent = {
-  expectedWord: string;
-  recognisedWord: string | null;
-  eventType: ReadingEventKind;
-  action: "celebrate" | "stay_silent" | "practise_gently" | "teacher_review";
-};
+export type ReadingEventKind = "correct" | "substitution" | "omission" | "insertion" | "repetition";
+export type ReadingEvent = { expectedWord: string; recognisedWord: string | null; eventType: ReadingEventKind; action: "celebrate" | "stay_silent" | "practise_gently" | "teacher_review" };
+export type WordState = StoredWordState;
 
 export type ReadingAnalysis = {
-  transcript: string;
-  accuracy: number;
-  pace: number;
-  correctWords: number;
-  totalWords: number;
-  durationSeconds: number;
-  practiceWords: string[];
-  events: ReadingEvent[];
-  childMessage: string;
-  nextStep: string;
+  transcript: string; mode: AssessmentMode; accuracy: number; firstPassAccuracy: number; pace: number; firstPassWcpm: number;
+  correctWords: number; firstPassCorrectWords: number; totalWords: number; durationSeconds: number; practiceWords: string[];
+  events: ReadingEvent[]; wordStates: WordState[]; retrySummary: { word: string; retries: number }[]; selfCorrections: string[];
+  modelWords: string[]; childMessage: string; nextStep: string;
+};
+
+export const assessmentModes: Record<AssessmentMode, { label: string; shortLabel: string; description: string }> = {
+  ASSISTED_PRACTICE: { label: "Practice with Corrections", shortLabel: "Assisted Practice", description: "Helpful corrections and optional retries are shown as you practise." },
+  GUIDED_PRACTICE: { label: "Practice with a Reading Coach", shortLabel: "Guided Practice", description: "After two tricky tries, the coach pauses and models the word before your next attempt." },
+  MONTHLY_ASSESSMENT: { label: "Monthly Assessment", shortLabel: "Monthly Assessment", description: "Your first read is recorded quietly for your teacher to review later." },
 };
 
 const wordPattern = /[a-zA-Z]+(?:'[a-zA-Z]+)?/g;
-
-export function tokenize(text: string): string[] {
-  return (text.toLowerCase().match(wordPattern) ?? []).map(word => word.replace(/[^a-z']/g, ""));
+export function tokenize(text: string): string[] { return (text.toLowerCase().match(wordPattern) ?? []).map(word => word.replace(/[^a-z']/g, "")); }
+export function initialiseWordStates(text: string): WordState[] { return tokenize(text).map((word, index) => ({ id: `word-${index}`, text: word, status: index === 0 ? "current" : "unread", attempts: 0 })); }
+function displayWord(word: string): string { return word.length ? word[0].toUpperCase() + word.slice(1) : "that word"; }
+function eventAction(mode: AssessmentMode, kind: ReadingEventKind): ReadingEvent["action"] {
+  if (mode === "MONTHLY_ASSESSMENT") return kind === "correct" ? "celebrate" : "teacher_review";
+  if (kind === "correct") return "celebrate";
+  if (kind === "insertion" || kind === "repetition") return "stay_silent";
+  return "practise_gently";
+}
+function mergeAttemptHistory(states: WordState[], attemptedStates: WordState[] | undefined, mode: AssessmentMode): WordState[] {
+  if (mode === "MONTHLY_ASSESSMENT" || !attemptedStates?.length) return states;
+  const recorded = new Map(attemptedStates.map(state => [state.id, state]));
+  return states.map(state => {
+    const attempt = recorded.get(state.id);
+    if (!attempt || attempt.text !== state.text || attempt.attempts <= state.attempts) return state;
+    return { ...state, attempts: attempt.attempts, status: state.status === "correct" || attempt.status === "retried_correct" ? "retried_correct" : state.status };
+  });
 }
 
-function displayWord(word: string): string {
-  return word.length > 0 ? word[0].toUpperCase() + word.slice(1) : "that word";
-}
-
-/**
- * A transparent prototype comparison. It does not diagnose reading ability or
- * treat every transcription difference as a child error; low-certainty words
- * are routed to gentle practice or teacher review rather than correction.
- */
-export function analyseReadingText(expectedText: string, transcript: string, durationSeconds: number): ReadingAnalysis {
-  const expected = tokenize(expectedText);
-  const observed = tokenize(transcript);
-  const events: ReadingEvent[] = [];
-  let expectedIndex = 0;
-  let observedIndex = 0;
-  let correctWords = 0;
-
+/** Transparent transcript comparison; it records practice/review signals, not a reading diagnosis. */
+export function analyseReadingText(expectedText: string, transcript: string, durationSeconds: number, mode: AssessmentMode = "ASSISTED_PRACTICE", attemptedStates?: WordState[]): ReadingAnalysis {
+  const expected = tokenize(expectedText); const observed = tokenize(transcript); const states = initialiseWordStates(expectedText); const events: ReadingEvent[] = [];
+  let expectedIndex = 0; let observedIndex = 0; let correctWords = 0; let firstPassCorrectWords = 0;
   while (expectedIndex < expected.length && observedIndex < observed.length) {
-    const target = expected[expectedIndex];
-    const heard = observed[observedIndex];
-
+    const target = expected[expectedIndex]; const heard = observed[observedIndex]; const state = states[expectedIndex];
     if (target === heard) {
-      correctWords += 1;
-      events.push({ expectedWord: target, recognisedWord: heard, eventType: "correct", action: "celebrate" });
-      expectedIndex += 1;
-      observedIndex += 1;
-      continue;
+      state.attempts += 1; state.status = state.status === "incorrect" ? "retried_correct" : "correct"; correctWords += 1;
+      if (state.attempts === 1) firstPassCorrectWords += 1;
+      events.push({ expectedWord: target, recognisedWord: heard, eventType: "correct", action: eventAction(mode, "correct") }); expectedIndex += 1; observedIndex += 1; continue;
     }
-
-    if (observedIndex + 1 < observed.length && target === observed[observedIndex + 1]) {
-      events.push({ expectedWord: target, recognisedWord: null, eventType: "insertion", action: "stay_silent" });
-      observedIndex += 1;
-      continue;
-    }
-
-    if (expectedIndex + 1 < expected.length && expected[expectedIndex + 1] === heard) {
-      events.push({ expectedWord: target, recognisedWord: null, eventType: "omission", action: "practise_gently" });
-      expectedIndex += 1;
-      continue;
-    }
-
-    if (observedIndex > 0 && heard === observed[observedIndex - 1]) {
-      events.push({ expectedWord: target, recognisedWord: heard, eventType: "repetition", action: "stay_silent" });
-      observedIndex += 1;
-      continue;
-    }
-
-    events.push({ expectedWord: target, recognisedWord: heard, eventType: "substitution", action: "teacher_review" });
-    expectedIndex += 1;
-    observedIndex += 1;
+    if (observedIndex + 1 < observed.length && target === observed[observedIndex + 1]) { events.push({ expectedWord: target, recognisedWord: null, eventType: "insertion", action: eventAction(mode, "insertion") }); observedIndex += 1; continue; }
+    state.attempts += 1; state.status = "incorrect";
+    const kind: ReadingEventKind = expectedIndex + 1 < expected.length && expected[expectedIndex + 1] === heard ? "omission" : "substitution";
+    events.push({ expectedWord: target, recognisedWord: kind === "omission" ? null : heard, eventType: kind, action: eventAction(mode, kind) });
+    if (kind === "omission") expectedIndex += 1; else { expectedIndex += 1; observedIndex += 1; }
   }
-
-  while (expectedIndex < expected.length) {
-    events.push({ expectedWord: expected[expectedIndex], recognisedWord: null, eventType: "omission", action: "practise_gently" });
-    expectedIndex += 1;
-  }
-
+  while (expectedIndex < expected.length) { const state = states[expectedIndex]; state.attempts += 1; state.status = "incorrect"; events.push({ expectedWord: expected[expectedIndex], recognisedWord: null, eventType: "omission", action: eventAction(mode, "omission") }); expectedIndex += 1; }
+  const resolvedStates = mergeAttemptHistory(states, attemptedStates, mode);
+  const retrySummary = resolvedStates.filter(state => state.attempts > 1).map(state => ({ word: state.text, retries: state.attempts - 1 }));
+  const selfCorrections = resolvedStates.filter(state => state.status === "retried_correct").map(state => state.text);
   const notableEvents = events.filter(event => event.eventType === "substitution" || event.eventType === "omission");
-  const practiceWords = Array.from(new Set(notableEvents.map(event => event.expectedWord).filter(word => word.length > 3))).slice(0, 3);
+  const practiceWords = mode === "MONTHLY_ASSESSMENT" ? [] : Array.from(new Set(notableEvents.map(event => event.expectedWord).filter(word => word.length > 3))).slice(0, 3);
+  const modelWords = mode === "GUIDED_PRACTICE" ? resolvedStates.filter(state => state.status === "incorrect" && state.attempts >= 2).map(state => state.text) : [];
   const effectiveDuration = Math.max(20, Math.round(durationSeconds || 60));
-  const accuracy = expected.length > 0 ? Math.round((correctWords / expected.length) * 100) : 0;
-  const pace = Math.max(0, Math.round((correctWords / effectiveDuration) * 60));
-
-  const childMessage = accuracy >= 92
-    ? "Wonderful focus. You kept the story moving and made your voice clear."
-    : accuracy >= 76
-      ? "You stayed with a tricky text, and that is how strong readers grow."
-      : "Thank you for giving this story a brave try. Every read helps your brain learn the path."
-
-  const practiceHint = practiceWords[0]
-    ? `Try “${displayWord(practiceWords[0])}” slowly once, then pop it back into the sentence.`
-    : "Choose one sentence you enjoyed and read it again with a smooth, steady voice.";
-
-  return {
-    transcript: transcript.trim(),
-    accuracy,
-    pace,
-    correctWords,
-    totalWords: expected.length,
-    durationSeconds: effectiveDuration,
-    practiceWords,
-    events,
-    childMessage,
-    nextStep: practiceHint,
-  };
+  const firstPassAccuracy = expected.length ? Math.round((firstPassCorrectWords / expected.length) * 100) : 0;
+  const assistedAccuracy = expected.length ? Math.round((correctWords / expected.length) * 100) : 0;
+  const accuracy = mode === "MONTHLY_ASSESSMENT" ? firstPassAccuracy : assistedAccuracy;
+  const firstPassWcpm = Math.max(0, Math.round((firstPassCorrectWords / effectiveDuration) * 60));
+  const pace = mode === "MONTHLY_ASSESSMENT" ? firstPassWcpm : Math.max(0, Math.round((correctWords / effectiveDuration) * 60));
+  const childMessage = mode === "MONTHLY_ASSESSMENT" ? "You completed your monthly reading check with calm focus. Your teacher will review it with you." : selfCorrections.length ? "You noticed a tricky word and had another go. That is what thoughtful readers do." : accuracy >= 92 ? "Wonderful focus. You kept the story moving and made your voice clear." : "You stayed with a tricky text, and that is how strong readers grow.";
+  const nextStep = mode === "MONTHLY_ASSESSMENT" ? "No correction prompts were used during this first-pass reading check." : practiceWords[0] ? `Try “${displayWord(practiceWords[0])}” slowly once, then pop it back into the sentence.` : "Choose one sentence you enjoyed and read it again with a smooth, steady voice.";
+  return { transcript: transcript.trim(), mode, accuracy, firstPassAccuracy, pace, firstPassWcpm, correctWords, firstPassCorrectWords, totalWords: expected.length, durationSeconds: effectiveDuration, practiceWords, events, wordStates: resolvedStates, retrySummary, selfCorrections, modelWords, childMessage, nextStep };
 }
 
 export type ReaderRole = "child" | "teacher" | "parent";
-
-/** Role rules ready for account-based class/family relationships. */
-export function mayViewChildProgress(viewer: ReaderRole, profileId: string, linkedProfileIds: string[]): boolean {
-  if (viewer === "teacher") return true;
-  return linkedProfileIds.includes(profileId);
-}
+export function mayViewChildProgress(viewer: ReaderRole, profileId: string, linkedProfileIds: string[]): boolean { return viewer === "teacher" || linkedProfileIds.includes(profileId); }

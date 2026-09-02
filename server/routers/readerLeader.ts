@@ -42,6 +42,8 @@ import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
 const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
 const parentRole = z.literal("parent");
+const assessmentModeSchema = z.enum(["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"]);
+const wordStateSchema = z.object({ id: z.string().regex(/^word-\d+$/), text: z.string().min(1).max(80), status: z.enum(["unread", "current", "correct", "incorrect", "retried_correct"]), attempts: z.number().int().min(0).max(12) });
 const exerciseSetSchema = z.object({
   vocabulary: z.array(z.object({ word: z.string().min(1).max(50), childFriendlyMeaning: z.string().min(1).max(200) })).min(3).max(6),
   questions: z.array(z.object({ prompt: z.string().min(1).max(240), options: z.array(z.string().min(1).max(120)).min(3).max(4), answer: z.string().min(1).max(120), explanation: z.string().min(1).max(240) })).min(3).max(4),
@@ -167,6 +169,8 @@ export const readerLeaderRouter = router({
       audioBase64: z.string().min(1).max(6_000_000),
       audioMime: z.string().optional(),
       durationSeconds: z.number().int().min(10).max(900),
+      assessmentMode: assessmentModeSchema.default("ASSISTED_PRACTICE"),
+      wordStates: z.array(wordStateSchema).max(1000).optional(),
     })).mutation(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can save this reading session." });
@@ -177,9 +181,9 @@ export const readerLeaderRouter = router({
       const stored = await storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType);
       const transcription = await (await import("../_core/voiceTranscription")).transcribeAudio({ audioUrl: await storageGetSignedUrl(stored.key), language: "en", prompt: "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes." });
       if ("error" in transcription) throw new Error(transcription.error);
-      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds);
+      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, practiceWords: analysis.practiceWords, interventions });
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates });
       return { session, analysis };
     }),
     save: protectedProcedure.input(z.object({
@@ -189,11 +193,13 @@ export const readerLeaderRouter = router({
       expectedText: z.string().min(20).max(8000),
       transcript: z.string().min(1).max(8000),
       durationSeconds: z.number().int().min(10).max(900),
+      assessmentMode: assessmentModeSchema.default("ASSISTED_PRACTICE"),
+      wordStates: z.array(wordStateSchema).max(1000).optional(),
       demoInterventions: z.array(z.object({ word: z.string().min(1).max(80), action: z.enum(["prompt", "model", "stay_silent", "teacher_review"]), note: z.string().min(1).max(300) })).max(3).optional().default([]),
     })).mutation(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can save this reading session." });
-      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds);
+      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds, input.assessmentMode, input.wordStates);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => {
         const action: "prompt" | "model" | "stay_silent" | "teacher_review" = event.action === "teacher_review"
           ? "teacher_review"
@@ -206,7 +212,7 @@ export const readerLeaderRouter = router({
           note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : event.action === "practise_gently" ? "Try that word again when you are ready." : "Reading event noted without interruption.",
         };
       });
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions] });
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates });
       return { session, analysis };
     }),
     childProgress: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {

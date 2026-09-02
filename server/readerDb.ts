@@ -15,6 +15,8 @@ import {
   type ExerciseSet,
   type QuizAnswer,
   type StoredIntervention,
+  type AssessmentMode,
+  type StoredWordState,
   users,
 } from "../drizzle/schema";
 import { getDb } from "./db";
@@ -164,11 +166,13 @@ export async function saveReadingSession(input: {
   wordsCorrectPerMinute: number;
   durationSeconds: number;
   audioStorageKey?: string | null;
+  assessmentMode?: AssessmentMode;
   practiceWords: string[];
   interventions: StoredIntervention[];
+  wordStates?: StoredWordState[];
 }) {
   const db = await requireDb();
-  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, completed: 1 });
+  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, assessmentMode: input.assessmentMode ?? "ASSISTED_PRACTICE", wordStates: input.wordStates ?? [], completed: 1 });
   const [session] = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, input.childProfileId)).orderBy(desc(readingSessions.id)).limit(1);
   if (!session) throw new Error("Could not save reading session.");
   return session;
@@ -310,8 +314,8 @@ export async function seedDemoCohort(adminUserId: number) {
   const [existingSession] = await db.select({ id: readingSessions.id }).from(readingSessions).where(eq(readingSessions.childProfileId, amina.id)).limit(1);
   if (!existingSession) {
     await db.insert(readingSessions).values([
-      { childProfileId: amina.id, storyTitle: "The Moonlight Kite", transcript: "Mina found a bright kite caught in the tall grass.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 92, completed: 1, practiceWords: ["glimmered", "gentle"], interventions: [{ word: "glimmered", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }] },
-      { childProfileId: leo.id, storyTitle: "Rainy-Day Robot", transcript: "Rain tapped on Zuri's window all afternoon.", accuracy: 95, wordsCorrectPerMinute: 116, durationSeconds: 84, completed: 1, practiceWords: ["afternoon"], interventions: [] },
+      { childProfileId: amina.id, storyTitle: "The Moonlight Kite", transcript: "Mina found a bright kite caught in the tall grass.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 92, completed: 1, practiceWords: ["glimmered", "gentle"], interventions: [{ word: "glimmered", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }], wordStates: [] },
+      { childProfileId: leo.id, storyTitle: "Rainy-Day Robot", transcript: "Rain tapped on Zuri's window all afternoon.", accuracy: 95, wordsCorrectPerMinute: 116, durationSeconds: 84, completed: 1, practiceWords: ["afternoon"], interventions: [], wordStates: [] },
     ]);
   }
   return { readerClass, childProfiles: [amina, leo], demoParentOpenId: parentUser.openId };
@@ -349,7 +353,7 @@ export async function provisionLocalDemoCohort() {
   await db.update(readingMaterials).set({ status: "assigned" }).where(eq(readingMaterials.id, material.id));
   await db.insert(materialAssignments).values({ classId: readerClass.id, materialId: material.id }).onDuplicateKeyUpdate({ set: { materialId: material.id } });
   const [existingSession] = await db.select({ id: readingSessions.id }).from(readingSessions).where(eq(readingSessions.childProfileId, profile.id)).limit(1);
-  if (!existingSession) await db.insert(readingSessions).values({ childProfileId: profile.id, materialId: material.id, storyTitle: "The Lantern in the Garden", transcript: "Amina carried a little lantern into the garden at dusk.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 72, completed: 1, practiceWords: ["lantern", "hedgehog"], interventions: [{ word: "hedgehog", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }] });
+  if (!existingSession) await db.insert(readingSessions).values({ childProfileId: profile.id, materialId: material.id, storyTitle: "The Lantern in the Garden", transcript: "Amina carried a little lantern into the garden at dusk.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 72, completed: 1, practiceWords: ["lantern", "hedgehog"], interventions: [{ word: "hedgehog", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }], wordStates: [] });
   const [existingQuizAttempt] = await db.select({ id: quizAttempts.id }).from(quizAttempts).where(and(eq(quizAttempts.childProfileId, profile.id), eq(quizAttempts.materialId, material.id))).limit(1);
   if (!existingQuizAttempt) await db.insert(quizAttempts).values({ childProfileId: profile.id, materialId: material.id, score: 2, totalQuestions: 3, answers: [{ questionIndex: 0, selectedAnswer: "A lantern", correct: true }, { questionIndex: 1, selectedAnswer: "A rabbit", correct: false }, { questionIndex: 2, selectedAnswer: "She stood still", correct: true }] });
   return { child, teacher, parent, profile, readerClass };
