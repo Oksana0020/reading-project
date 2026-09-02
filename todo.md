@@ -68,3 +68,16 @@
 - [x] Capture browser evidence of the Assisted Practice yellow current, red retry, and green self-correction visual states.
 - [x] Complete a Guided Practice session after its two-attempt model prompt and capture the resulting retry report.
 - [x] Inspect the Assisted Practice current-word element’s rendered yellow background and underline treatment before final delivery.
+- [x] Add teacher and parent trend charts comparing monthly assessment story match and WCPM over time.
+- [x] Persist word-level audio timing metadata and allow authorised teachers to seek session playback by clicking a transcript word.
+- [x] Add learner-level teacher settings for default reading mode and target WCPM.
+- [x] Refactor the demo login portal into a centred, uncluttered password-entry card after a role is selected.
+- [x] Route teacher material save actions to a dedicated material-review screen with AI exercise and dashboard actions.
+- [x] Route approval and assignment actions to an assignment-confirmation screen with class and library details.
+- [x] Replace the generated-exercise split screen with full-width vocabulary and radio-style question layouts.
+- [x] Refocus the parent dashboard with role-appropriate navigation, celebratory reading metrics, and a three-step interactive home-practice checklist.
+- [x] Test role-specific routes, chart values, learner settings, responsive workflow screens, and timestamp derivation. (Validated direct teacher review and assignment-confirmation routes, the clean local password card and role redirect, teacher/parent charts with seeded monthly records, parent checklist interaction, type checking, and 29 automated tests. Word seeking uses retained audio when an actual recording exists; timestamp derivation is covered by unit tests.)
+- [x] Validate that a teacher-saved learner reading plan persists through reload and is applied on the child reading canvas. (A post-fix Guided Practice plan persisted across fresh teacher and child demo sign-ins and opened the child’s assigned story with the Reading Coach badge.)
+- [x] Validate exact timestamp seeking and short-clip stopping for the authorised word-linked playback fixture. (The “reads” cue sought to 1.00 seconds and paused at 2.15 seconds, its 1.00-second interval plus the deliberate 150 ms tail.)
+- [x] Validate the material-review and assignment-confirmation teacher workflows at tablet and mobile breakpoints. (Authenticated 375 px and 768 px captures showed responsive readable layouts, visible calls to action, and no horizontal overflow.)
+- [x] Remove the Express logout-cookie deprecation warning observed during final runtime log inspection. (The logout route now clears the cookie with matching secure attributes only; type checking, all 30 tests, and a fresh browser logout passed without a new deprecation entry.)

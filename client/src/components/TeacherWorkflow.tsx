@@ -1,0 +1,30 @@
+import { trpc } from "@/lib/trpc";
+import { ArrowLeft, BookOpen, Check, ClipboardCheck, FileText, Sparkles, WandSparkles } from "lucide-react";
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { toast } from "sonner";
+
+function ExerciseDocument({ exercise }: { exercise: any }) {
+  return <section className="exercise-document"><div className="exercise-document-head"><div><div className="kicker">AI exercise draft · teacher review</div><h2>{exercise.activity}</h2><p>Review language, answers, and activity before assigning this material to children.</p></div><span className="view-chip">Draft for review</span></div><section className="exercise-section"><h3>Key vocabulary</h3><div className="vocabulary-grid">{exercise.vocabulary.map((item: any) => <article key={item.word} className="vocabulary-card"><strong>{item.word}</strong><p>{item.childFriendlyMeaning}</p></article>)}</div></section><section className="exercise-section question-document"><h3>Comprehension questions</h3><div className="question-document-list">{exercise.questions.map((question: any, index: number) => <article key={question.prompt}><p className="question-prompt"><b>{index + 1}.</b> {question.prompt}</p><div className="preview-options">{question.options.map((option: string, optionIndex: number) => <label key={option}><input type="radio" name={`preview-question-${index}`} disabled /><span>{String.fromCharCode(65 + optionIndex)}</span>{option}</label>)}</div><p className="answer-note"><b>Teacher answer:</b> {question.answer}</p></article>)}</div></section></section>;
+}
+
+export function MaterialReviewScreen({ materialId }: { materialId: number }) {
+  const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
+  const review = trpc.readerLeader.materials.review.useQuery({ materialId });
+  const [generated, setGenerated] = useState<any>(null);
+  const generate = trpc.readerLeader.materials.generateExercises.useMutation({ onSuccess: async data => { setGenerated(data.exercise.exerciseSet); await utils.readerLeader.materials.review.invalidate({ materialId }); }, onError: error => toast(error.message) });
+  const approve = trpc.readerLeader.materials.approve.useMutation({ onSuccess: async data => { window.sessionStorage.setItem("reader-leader-assignment", JSON.stringify({ materialId, assignedClasses: data.assignedClasses })); await utils.readerLeader.dashboards.teacher.invalidate(); setLocation("/teacher/assignments/confirmation"); }, onError: error => toast(error.message) });
+  if (review.isLoading) return <div className="workflow-page"><div className="workflow-card">Loading your saved material…</div></div>;
+  if (!review.data) return <div className="workflow-page"><section className="workflow-card"><h1>Material not found</h1><p>This material is unavailable, or belongs to another teacher account.</p><button className="secondary-cta" onClick={() => setLocation("/")}><ArrowLeft size={16} /> Return to Dashboard</button></section></div>;
+  const material = review.data.material;
+  const exercise = generated ?? review.data.exercise?.exerciseSet;
+  return <main className="workflow-page"><section className="workflow-hero success"><div><div className="kicker"><Check size={15} /> Saved resource</div><h1>Material Saved Successfully!</h1><p><b>{material.title}</b> is ready for your professional review. Create a structured exercise draft next, then approve and assign when it fits your class.</p></div><div className="workflow-actions"><button className="primary-cta" onClick={() => generate.mutate({ materialId })} disabled={generate.isPending}><WandSparkles size={17} /> {generate.isPending ? "Generating…" : exercise ? "Regenerate AI Exercises" : "Generate AI Exercises"}</button><button className="secondary-cta" onClick={() => setLocation("/")}><ArrowLeft size={17} /> Return to Dashboard</button></div></section><section className="material-preview-document"><div className="card-title-row"><h2>{material.title}</h2><span>{material.readingLevel}</span></div><p>{material.sourceText}</p></section>{exercise ? <><ExerciseDocument exercise={exercise} /><section className="workflow-footer"><div><h2>Ready when you are</h2><p>Once approved, this activity is assigned to your class and becomes visible in enrolled children’s libraries.</p></div><button className="primary-cta" onClick={() => approve.mutate({ materialId })} disabled={approve.isPending}><Check size={17} /> {approve.isPending ? "Assigning…" : "Approve & Assign"}</button></section></> : <section className="workflow-empty"><WandSparkles size={34} /><h2>Generate an exercise set when ready.</h2><p>The draft will include vocabulary cards, distinct answer options, and a short reading activity for your review.</p></section>}</main>;
+}
+
+export function AssignmentConfirmationScreen() {
+  const [, setLocation] = useLocation();
+  const raw = typeof window === "undefined" ? null : window.sessionStorage.getItem("reader-leader-assignment");
+  const assignment = raw ? JSON.parse(raw) as { materialId: number; assignedClasses: { id: number; name: string; joinCode: string }[] } : { materialId: 0, assignedClasses: [] };
+  return <main className="workflow-page"><section className="workflow-card confirmation-card"><span className="confirmation-icon"><ClipboardCheck size={34} /></span><div className="kicker">Assignment confirmed</div><h1>Your learning activity is ready.</h1><p>The approved material and exercise set are now available to the learners enrolled in the selected class.</p><div className="confirmation-details"><div><b>Assigned class / students</b>{assignment.assignedClasses.length ? assignment.assignedClasses.map(item => <span key={item.id}>{item.name}</span>) : <span>Your current class</span>}</div><div><b>Class share code</b>{assignment.assignedClasses.length ? assignment.assignedClasses.map(item => <span key={item.id} className="share-code">{item.joinCode}</span>) : <span>Available from your dashboard</span>}</div></div><button className="primary-cta" onClick={() => setLocation("/")}><BookOpen size={17} /> View Assigned Activities in Library</button></section></main>;
+}

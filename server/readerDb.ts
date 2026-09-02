@@ -4,6 +4,7 @@ import {
   childProfiles,
   classEnrollments,
   familyLinks,
+  learnerReadingSettings,
   materialAssignments,
   readerClasses,
   readingExercises,
@@ -17,9 +18,13 @@ import {
   type StoredIntervention,
   type AssessmentMode,
   type StoredWordState,
+  type StoredWordTiming,
   users,
 } from "../drizzle/schema";
 import { getDb } from "./db";
+import { storagePut } from "./storage";
+import { buildMonthlyAssessmentTrend, minutesReadThisWeek } from "./learningAnalytics";
+import { createDemoPlaybackTone } from "./demoPlaybackFixture";
 
 export type AuthenticatedReader = { id: number; role: AccountRole };
 
@@ -57,6 +62,20 @@ export async function createChildProfile(userId: number, displayName: string, fa
   const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.userId, userId)).limit(1);
   if (!profile) throw new Error("Could not create child profile.");
   return profile;
+}
+
+const defaultLearnerSettings = (childProfileId: number) => ({ childProfileId, defaultReadingMode: "ASSISTED_PRACTICE" as AssessmentMode, targetWcpm: 100 });
+
+export async function getLearnerReadingSettings(childProfileId: number) {
+  const db = await requireDb();
+  const [settings] = await db.select().from(learnerReadingSettings).where(eq(learnerReadingSettings.childProfileId, childProfileId)).limit(1);
+  return settings ?? defaultLearnerSettings(childProfileId);
+}
+
+export async function saveLearnerReadingSettings(childProfileId: number, settings: { defaultReadingMode: AssessmentMode; targetWcpm: number }) {
+  const db = await requireDb();
+  await db.insert(learnerReadingSettings).values({ childProfileId, ...settings }).onDuplicateKeyUpdate({ set: settings });
+  return getLearnerReadingSettings(childProfileId);
 }
 
 export async function createClassForTeacher(teacherUserId: number, name: string, joinCode: string) {
@@ -120,6 +139,16 @@ export async function listTeacherMaterials(teacherUserId: number) {
   return db.select().from(readingMaterials).where(eq(readingMaterials.teacherUserId, teacherUserId)).orderBy(desc(readingMaterials.createdAt));
 }
 
+export async function getTeacherMaterialReview(teacherUserId: number, materialId: number) {
+  const db = await requireDb();
+  const [row] = await db.select({ material: readingMaterials, exercise: readingExercises })
+    .from(readingMaterials)
+    .leftJoin(readingExercises, eq(readingMaterials.id, readingExercises.materialId))
+    .where(and(eq(readingMaterials.id, materialId), eq(readingMaterials.teacherUserId, teacherUserId)))
+    .limit(1);
+  return row;
+}
+
 export async function listAssignedMaterialsForChild(childUserId: number) {
   const db = await requireDb();
   return db.select({
@@ -170,9 +199,10 @@ export async function saveReadingSession(input: {
   practiceWords: string[];
   interventions: StoredIntervention[];
   wordStates?: StoredWordState[];
+  wordTimings?: StoredWordTiming[];
 }) {
   const db = await requireDb();
-  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, assessmentMode: input.assessmentMode ?? "ASSISTED_PRACTICE", wordStates: input.wordStates ?? [], completed: 1 });
+  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, assessmentMode: input.assessmentMode ?? "ASSISTED_PRACTICE", wordStates: input.wordStates ?? [], wordTimings: input.wordTimings ?? [], completed: 1 });
   const [session] = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, input.childProfileId)).orderBy(desc(readingSessions.id)).limit(1);
   if (!session) throw new Error("Could not save reading session.");
   return session;
@@ -182,6 +212,12 @@ export async function getSessionById(sessionId: number) {
   const db = await requireDb();
   const [session] = await db.select().from(readingSessions).where(eq(readingSessions.id, sessionId)).limit(1);
   return session;
+}
+
+export async function getSessionPlayback(sessionId: number) {
+  const session = await getSessionById(sessionId);
+  if (!session) return undefined;
+  return { session, wordTimings: session.wordTimings ?? [] };
 }
 
 export async function getAssignedMaterialForChild(childUserId: number, materialId: number) {
@@ -241,33 +277,43 @@ export async function getChildProgress(childProfileId: number) {
   const db = await requireDb();
   const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.id, childProfileId)).limit(1);
   if (!profile) throw new Error("Child profile not found.");
-  const sessions = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, childProfileId)).orderBy(desc(readingSessions.createdAt)).limit(10);
+  const sessions = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, childProfileId)).orderBy(desc(readingSessions.createdAt)).limit(36);
   const total = sessions.length || 1;
   const averageAccuracy = Math.round(sessions.reduce((sum, session) => sum + session.accuracy, 0) / total);
   const averageWcpm = Math.round(sessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / total);
   const practiceWords = Array.from(new Set(sessions.flatMap(session => session.practiceWords))).slice(0, 4);
-  return { profile, sessions, quizHistory: await getQuizHistory(childProfileId), summary: { sessionsCompleted: sessions.length, averageAccuracy, averageWcpm, practiceWords } };
+  return {
+    profile,
+    sessions,
+    quizHistory: await getQuizHistory(childProfileId),
+    assessmentTrend: buildMonthlyAssessmentTrend(sessions),
+    minutesReadThisWeek: minutesReadThisWeek(sessions),
+    learnerSettings: await getLearnerReadingSettings(childProfileId),
+    summary: { sessionsCompleted: sessions.length, averageAccuracy, averageWcpm, practiceWords },
+  };
 }
 
 export async function getTeacherDashboard(teacherUserId: number) {
   const db = await requireDb();
   const classes = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
-  if (!classes.length) return { classes, pupils: [], needsReview: [], materials: [] };
+  if (!classes.length) return { classes, pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], branding: await getSchoolBrandingForTeacher(teacherUserId) };
   const classIds = classes.map(readerClass => readerClass.id);
   const enrolled = await db.select({ childProfileId: classEnrollments.childProfileId, classId: classEnrollments.classId, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(classEnrollments).innerJoin(childProfiles, eq(classEnrollments.childProfileId, childProfiles.id)).where(inArray(classEnrollments.classId, classIds));
   const profileIds = enrolled.map(row => row.childProfileId);
   const sessions = profileIds.length ? await db.select().from(readingSessions).where(inArray(readingSessions.childProfileId, profileIds)).orderBy(desc(readingSessions.createdAt)) : [];
+  const settingsRows = profileIds.length ? await db.select().from(learnerReadingSettings).where(inArray(learnerReadingSettings.childProfileId, profileIds)) : [];
   const pupils = enrolled.map(pupil => {
     const pupilSessions = sessions.filter(session => session.childProfileId === pupil.childProfileId);
     const count = pupilSessions.length || 1;
-    return { ...pupil, sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count) };
+    const settings = settingsRows.find(item => item.childProfileId === pupil.childProfileId) ?? defaultLearnerSettings(pupil.childProfileId);
+    return { ...pupil, sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count), settings };
   });
   const needsReview = sessions.flatMap(session => session.interventions.filter(intervention => intervention.action === "teacher_review").map(intervention => ({ sessionId: session.id, childProfileId: session.childProfileId, storyTitle: session.storyTitle, ...intervention }))).slice(0, 5);
   const materials = await listTeacherMaterials(teacherUserId);
   const comments = await getSessionComments(sessions.map(session => session.id));
   const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
-  return { classes, pupils, needsReview, materials, recentSessions, branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  return { classes, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
 export async function getParentDashboard(parentUserId: number) {
@@ -341,6 +387,8 @@ export async function provisionLocalDemoCohort() {
   if (!readerClass) throw new Error("Could not prepare the teacher demo class.");
   await db.insert(classEnrollments).values({ classId: readerClass.id, childProfileId: profile.id }).onDuplicateKeyUpdate({ set: { classId: readerClass.id } });
   await db.insert(familyLinks).values({ parentUserId: parent.id, childProfileId: profile.id }).onDuplicateKeyUpdate({ set: { parentUserId: parent.id } });
+  // Seed a welcoming demo plan once, while preserving any setting a teacher has saved afterwards.
+  await db.insert(learnerReadingSettings).values({ childProfileId: profile.id, defaultReadingMode: "ASSISTED_PRACTICE", targetWcpm: 112 }).onDuplicateKeyUpdate({ set: { childProfileId: profile.id } });
   const [existingMaterial] = await db.select().from(readingMaterials).where(and(eq(readingMaterials.teacherUserId, teacher.id), eq(readingMaterials.title, "The Lantern in the Garden"))).limit(1);
   const material = existingMaterial ?? (await (async () => {
     await db.insert(readingMaterials).values({ teacherUserId: teacher.id, title: "The Lantern in the Garden", readingLevel: "Level 3 · Sky Blue", sourceText: "Amina carried a little lantern into the garden at dusk. The light made golden circles on the path. Near the tall gate, she saw a hedgehog sniffing beside the flowers. Amina stood very still, then watched it hurry safely under the hedge.", status: "assigned" });
@@ -354,6 +402,17 @@ export async function provisionLocalDemoCohort() {
   await db.insert(materialAssignments).values({ classId: readerClass.id, materialId: material.id }).onDuplicateKeyUpdate({ set: { materialId: material.id } });
   const [existingSession] = await db.select({ id: readingSessions.id }).from(readingSessions).where(eq(readingSessions.childProfileId, profile.id)).limit(1);
   if (!existingSession) await db.insert(readingSessions).values({ childProfileId: profile.id, materialId: material.id, storyTitle: "The Lantern in the Garden", transcript: "Amina carried a little lantern into the garden at dusk.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 72, completed: 1, practiceWords: ["lantern", "hedgehog"], interventions: [{ word: "hedgehog", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }], wordStates: [] });
+  const [historicalTrendSeed] = await db.select({ id: readingSessions.id }).from(readingSessions).where(and(eq(readingSessions.childProfileId, profile.id), eq(readingSessions.storyTitle, "Garden Walk · June"))).limit(1);
+  if (!historicalTrendSeed) await db.insert(readingSessions).values([
+    { childProfileId: profile.id, materialId: material.id, storyTitle: "Garden Walk · June", transcript: "Amina followed the path through the garden.", accuracy: 82, wordsCorrectPerMinute: 88, durationSeconds: 95, completed: 1, assessmentMode: "MONTHLY_ASSESSMENT", practiceWords: ["followed"], interventions: [], wordStates: [], wordTimings: [], createdAt: new Date("2026-06-03T10:00:00Z") },
+    { childProfileId: profile.id, materialId: material.id, storyTitle: "Garden Walk · July", transcript: "Amina followed the path through the quiet garden.", accuracy: 87, wordsCorrectPerMinute: 96, durationSeconds: 91, completed: 1, assessmentMode: "MONTHLY_ASSESSMENT", practiceWords: ["quiet"], interventions: [], wordStates: [], wordTimings: [], createdAt: new Date("2026-07-03T10:00:00Z") },
+    { childProfileId: profile.id, materialId: material.id, storyTitle: "Garden Walk · August", transcript: "Amina followed the bright garden path with confidence.", accuracy: 92, wordsCorrectPerMinute: 104, durationSeconds: 85, completed: 1, assessmentMode: "MONTHLY_ASSESSMENT", practiceWords: ["confidence"], interventions: [], wordStates: [], wordTimings: [], createdAt: new Date("2026-08-03T10:00:00Z") },
+  ]);
+  const [playbackFixture] = await db.select({ id: readingSessions.id }).from(readingSessions).where(and(eq(readingSessions.childProfileId, profile.id), eq(readingSessions.storyTitle, "Word-linked playback technical check"))).limit(1);
+  if (!playbackFixture) {
+    const audio = await storagePut("demo-playback/word-timing-check.wav", createDemoPlaybackTone(), "audio/wav");
+    await db.insert(readingSessions).values({ childProfileId: profile.id, materialId: material.id, storyTitle: "Word-linked playback technical check", transcript: "Amina reads steadily", accuracy: 100, wordsCorrectPerMinute: 100, durationSeconds: 3, audioStorageKey: audio.key, completed: 1, assessmentMode: "ASSISTED_PRACTICE", practiceWords: [], interventions: [], wordStates: [], wordTimings: [{ id: "spoken-0", text: "Amina", startMs: 0, endMs: 1000 }, { id: "spoken-1", text: "reads", startMs: 1000, endMs: 2000 }, { id: "spoken-2", text: "steadily", startMs: 2000, endMs: 3000 }] });
+  }
   const [existingQuizAttempt] = await db.select({ id: quizAttempts.id }).from(quizAttempts).where(and(eq(quizAttempts.childProfileId, profile.id), eq(quizAttempts.materialId, material.id))).limit(1);
   if (!existingQuizAttempt) await db.insert(quizAttempts).values({ childProfileId: profile.id, materialId: material.id, score: 2, totalQuestions: 3, answers: [{ questionIndex: 0, selectedAnswer: "A lantern", correct: true }, { questionIndex: 1, selectedAnswer: "A rabbit", correct: false }, { questionIndex: 2, selectedAnswer: "She stood still", correct: true }] });
   return { child, teacher, parent, profile, readerClass };

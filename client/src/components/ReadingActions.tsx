@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
-import { Download, Play } from "lucide-react";
-import { useState } from "react";
+import { Download, Play, Volume2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type Audience = "child" | "parent" | "teacher";
@@ -58,4 +58,56 @@ export function SessionAudioButton({ sessionId, label = "Play recording" }: { se
     try { await audio.play(); } catch { setPlaying(false); toast("Your browser blocked automatic audio playback. Try the button again."); }
   };
   return <button className="audio-action" onClick={() => void play()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button>;
+}
+
+type WordTiming = { id: string; text: string; startMs: number; endMs: number };
+type PlaybackData = { url: string; transcript: string; wordTimings: WordTiming[] };
+
+export function SessionTranscriptPlayer({ sessionId }: { sessionId?: number | null }) {
+  const [playback, setPlayback] = useState<PlaybackData | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const clipStopTimerRef = useRef<number | null>(null);
+  const audioUrl = trpc.readerLeader.sessions.audioUrl.useQuery({ sessionId: sessionId ?? 1 }, { enabled: false, retry: false });
+
+  useEffect(() => () => {
+    if (clipStopTimerRef.current !== null) window.clearTimeout(clipStopTimerRef.current);
+  }, []);
+
+  const load = async (): Promise<PlaybackData | null> => {
+    if (!sessionId) { toast("This saved session does not include a recording."); return null; }
+    const result = await audioUrl.refetch();
+    if (!result.data?.url) { toast(result.error?.message || "This recording is unavailable."); return null; }
+    const data = result.data as PlaybackData;
+    setPlayback(data);
+    return data;
+  };
+
+  const hearWord = async (timing: WordTiming) => {
+    const source = playback ?? await load();
+    if (!source) return;
+    const audio = audioRef.current;
+    if (!audio) return toast("The recording player is still preparing. Please choose the word again.");
+    const resolvedSource = new URL(source.url, window.location.href).href;
+    if (audio.src !== resolvedSource) {
+      audio.src = source.url;
+      await new Promise<void>(resolve => {
+        if (audio.readyState >= 1) return resolve();
+        audio.addEventListener("loadedmetadata", () => resolve(), { once: true });
+        audio.load();
+      });
+    }
+    audio.currentTime = timing.startMs / 1000;
+    const stopAt = timing.endMs / 1000 + 0.15;
+    if (clipStopTimerRef.current !== null) window.clearTimeout(clipStopTimerRef.current);
+    try {
+      await audio.play();
+      clipStopTimerRef.current = window.setTimeout(() => {
+        audio.pause();
+        audio.currentTime = Math.min(stopAt, Number.isFinite(audio.duration) ? audio.duration : stopAt);
+        clipStopTimerRef.current = null;
+      }, Math.max(150, timing.endMs - timing.startMs + 150));
+    } catch { toast("Your browser blocked audio playback. Please try again."); }
+  };
+
+  return <section className="transcript-player"><div><div className="kicker">Word-linked playback</div><h3>Listen closely to a saved reading moment.</h3><p>Choose a word to jump to its matching audio moment.</p></div>{!playback ? <button className="audio-action" onClick={() => void load()} disabled={audioUrl.isFetching}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : "Open word playback"}</button> : <div className="timed-transcript"><audio ref={audioRef} src={playback.url} preload="metadata" data-testid="word-linked-audio" />{playback.wordTimings.length ? playback.wordTimings.map(timing => <button key={timing.id} onClick={() => void hearWord(timing)} title={`Play ${timing.text}`}><Volume2 size={12} /> {timing.text}</button>) : <p>Word timing is not available for this earlier recording.</p>}</div>}</section>;
 }

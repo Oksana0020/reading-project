@@ -17,8 +17,11 @@ import {
   getChildProfileForUser,
   getChildProgress,
   getAssignedMaterialForChild,
+  getLearnerReadingSettings,
   getParentDashboard,
   getSessionById,
+  getSessionPlayback,
+  getTeacherMaterialReview,
   getTeacherDashboard,
   isTeacher,
   linkParentToFamily,
@@ -35,9 +38,11 @@ import {
   saveSchoolBranding,
   seedDemoCohort,
   saveReadingSession,
+  saveLearnerReadingSettings,
   setUserRole,
 } from "../readerDb";
 import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
+import { buildWordTimings } from "../wordTiming";
 
 const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
@@ -118,6 +123,12 @@ export const readerLeaderRouter = router({
       requireTeacher(ctx.user.role);
       return listTeacherMaterials(ctx.user.id);
     }),
+    review: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const review = await getTeacherMaterialReview(ctx.user.id, input.materialId);
+      if (!review) throw new TRPCError({ code: "NOT_FOUND", message: "This material is not available to your class." });
+      return review;
+    }),
     create: protectedProcedure.input(z.object({
       title: z.string().trim().min(3).max(180),
       readingLevel: z.string().trim().min(2).max(80),
@@ -157,7 +168,8 @@ export const readerLeaderRouter = router({
     approve: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
       await approveExercises(ctx.user.id, input.materialId);
-      return { success: true };
+      const dashboard = await getTeacherDashboard(ctx.user.id);
+      return { success: true, assignedClasses: dashboard.classes.map(readerClass => ({ id: readerClass.id, name: readerClass.name, joinCode: readerClass.joinCode })) };
     }),
   }),
   sessions: router({
@@ -183,7 +195,8 @@ export const readerLeaderRouter = router({
       if ("error" in transcription) throw new Error(transcription.error);
       const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates });
+      const wordTimings = buildWordTimings(transcription.text, analysis.durationSeconds, transcription.segments);
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates, wordTimings });
       return { session, analysis };
     }),
     save: protectedProcedure.input(z.object({
@@ -212,7 +225,8 @@ export const readerLeaderRouter = router({
           note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : event.action === "practise_gently" ? "Try that word again when you are ready." : "Reading event noted without interruption.",
         };
       });
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates });
+      const wordTimings = buildWordTimings(analysis.transcript, analysis.durationSeconds);
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates, wordTimings });
       return { session, analysis };
     }),
     childProgress: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -221,11 +235,13 @@ export const readerLeaderRouter = router({
       return getChildProgress(input.childProfileId);
     }),
     audioUrl: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
-      const session = await getSessionById(input.sessionId);
+      const playback = await getSessionPlayback(input.sessionId);
+      const session = playback?.session;
       if (!session || !session.audioStorageKey) throw new TRPCError({ code: "NOT_FOUND", message: "This saved session does not have an audio recording." });
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, session.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This recording is not available to your account." });
-      return storageGet(session.audioStorageKey);
+      const audio = await storageGet(session.audioStorageKey);
+      return { ...audio, transcript: session.transcript, wordTimings: playback.wordTimings };
     }),
     comments: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       const session = await getSessionById(input.sessionId);
@@ -241,6 +257,19 @@ export const readerLeaderRouter = router({
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, session.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This child is not assigned to your class." });
       return addSessionComment({ sessionId: input.sessionId, teacherUserId: ctx.user.id, comment: input.comment });
+    }),
+  }),
+  learners: router({
+    settings: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not available to your account." });
+      return getLearnerReadingSettings(input.childProfileId);
+    }),
+    saveSettings: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), defaultReadingMode: assessmentModeSchema, targetWcpm: z.number().int().min(30).max(250) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not assigned to your class." });
+      return saveLearnerReadingSettings(input.childProfileId, { defaultReadingMode: input.defaultReadingMode, targetWcpm: input.targetWcpm });
     }),
   }),
   quizzes: router({

@@ -2,6 +2,8 @@ import { int, json, mysqlEnum, mysqlTable, text, timestamp, unique, varchar } fr
 
 export const accountRoleValues = ["user", "admin", "child", "teacher", "parent"] as const;
 export type AccountRole = (typeof accountRoleValues)[number];
+export const assessmentModeValues = ["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"] as const;
+export type AssessmentMode = (typeof assessmentModeValues)[number];
 
 /** Core identity managed by Manus OAuth. Roles are assigned through the Reader Leader onboarding flow. */
 export const users = mysqlTable("users", {
@@ -40,6 +42,15 @@ export const childProfiles = mysqlTable("childProfiles", {
   bookBand: varchar("bookBand", { length: 80 }).notNull().default("Level 3 · Sky Blue"),
   familyCode: varchar("familyCode", { length: 12 }).notNull().unique(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** Teacher-configured defaults and supportive pace target for one learner. */
+export const learnerReadingSettings = mysqlTable("learnerReadingSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  childProfileId: int("childProfileId").notNull().unique().references(() => childProfiles.id, { onDelete: "cascade" }),
+  defaultReadingMode: mysqlEnum("defaultReadingMode", assessmentModeValues).notNull().default("ASSISTED_PRACTICE"),
+  targetWcpm: int("targetWcpm").notNull().default(100),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
@@ -90,9 +101,8 @@ export const materialAssignments = mysqlTable("materialAssignments", {
 }, table => [unique("assigned_material_class_unique").on(table.classId, table.materialId)]);
 
 export type StoredIntervention = { word: string; action: "prompt" | "model" | "stay_silent" | "teacher_review"; note: string };
-export const assessmentModeValues = ["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"] as const;
-export type AssessmentMode = (typeof assessmentModeValues)[number];
 export type StoredWordState = { id: string; text: string; status: "unread" | "current" | "correct" | "incorrect" | "retried_correct"; attempts: number };
+export type StoredWordTiming = { id: string; text: string; startMs: number; endMs: number };
 
 export const readingSessions = mysqlTable("readingSessions", {
   id: int("id").autoincrement().primaryKey(),
@@ -109,6 +119,7 @@ export const readingSessions = mysqlTable("readingSessions", {
   practiceWords: json("practiceWords").$type<string[]>().notNull(),
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
   wordStates: json("wordStates").$type<StoredWordState[]>().notNull(),
+  wordTimings: json("wordTimings").$type<StoredWordTiming[]>(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
