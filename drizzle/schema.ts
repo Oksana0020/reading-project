@@ -91,10 +91,23 @@ export const readingSessions = mysqlTable("readingSessions", {
   accuracy: int("accuracy").notNull(),
   wordsCorrectPerMinute: int("wordsCorrectPerMinute").notNull(),
   durationSeconds: int("durationSeconds").notNull(),
+  audioStorageKey: varchar("audioStorageKey", { length: 512 }),
   completed: int("completed").notNull().default(1),
   practiceWords: json("practiceWords").$type<string[]>().notNull(),
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type QuizAnswer = { questionIndex: number; selectedAnswer: string; correct: boolean };
+
+export const quizAttempts = mysqlTable("quizAttempts", {
+  id: int("id").autoincrement().primaryKey(),
+  childProfileId: int("childProfileId").notNull().references(() => childProfiles.id, { onDelete: "cascade" }),
+  materialId: int("materialId").notNull().references(() => readingMaterials.id, { onDelete: "cascade" }),
+  answers: json("answers").$type<QuizAnswer[]>().notNull(),
+  score: int("score").notNull(),
+  totalQuestions: int("totalQuestions").notNull(),
+  completedAt: timestamp("completedAt").defaultNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;

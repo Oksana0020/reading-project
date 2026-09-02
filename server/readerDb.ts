@@ -9,7 +9,9 @@ import {
   readingExercises,
   readingMaterials,
   readingSessions,
+  quizAttempts,
   type ExerciseSet,
+  type QuizAnswer,
   type StoredIntervention,
   users,
 } from "../drizzle/schema";
@@ -159,14 +161,34 @@ export async function saveReadingSession(input: {
   accuracy: number;
   wordsCorrectPerMinute: number;
   durationSeconds: number;
+  audioStorageKey?: string | null;
   practiceWords: string[];
   interventions: StoredIntervention[];
 }) {
   const db = await requireDb();
-  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, completed: 1 });
+  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, completed: 1 });
   const [session] = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, input.childProfileId)).orderBy(desc(readingSessions.id)).limit(1);
   if (!session) throw new Error("Could not save reading session.");
   return session;
+}
+
+export async function getSessionById(sessionId: number) {
+  const db = await requireDb();
+  const [session] = await db.select().from(readingSessions).where(eq(readingSessions.id, sessionId)).limit(1);
+  return session;
+}
+
+export async function getAssignedMaterialForChild(childUserId: number, materialId: number) {
+  const materials = await listAssignedMaterialsForChild(childUserId);
+  return materials.find(material => material.id === materialId);
+}
+
+export async function saveQuizAttempt(input: { childProfileId: number; materialId: number; answers: QuizAnswer[]; score: number; totalQuestions: number }) {
+  const db = await requireDb();
+  await db.insert(quizAttempts).values(input);
+  const [attempt] = await db.select().from(quizAttempts).where(and(eq(quizAttempts.childProfileId, input.childProfileId), eq(quizAttempts.materialId, input.materialId))).orderBy(desc(quizAttempts.id)).limit(1);
+  if (!attempt) throw new Error("Could not save quiz attempt.");
+  return attempt;
 }
 
 export async function getChildProgress(childProfileId: number) {
@@ -197,7 +219,8 @@ export async function getTeacherDashboard(teacherUserId: number) {
   });
   const needsReview = sessions.flatMap(session => session.interventions.filter(intervention => intervention.action === "teacher_review").map(intervention => ({ sessionId: session.id, childProfileId: session.childProfileId, storyTitle: session.storyTitle, ...intervention }))).slice(0, 5);
   const materials = await listTeacherMaterials(teacherUserId);
-  return { classes, pupils, needsReview, materials };
+  const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader" }));
+  return { classes, pupils, needsReview, materials, recentSessions };
 }
 
 export async function getParentDashboard(parentUserId: number) {

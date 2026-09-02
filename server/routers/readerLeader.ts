@@ -4,6 +4,9 @@ import { invokeLLM } from "../_core/llm";
 import { protectedProcedure, router } from "../_core/trpc";
 import { analyseReadingText } from "../reader";
 import { assertSafeExerciseSet } from "../exerciseSafety";
+import { extractReadingMaterial } from "../documentExtraction";
+import { createReadingReport } from "../readerReports";
+import { scoreQuiz } from "../quizPolicy";
 import {
   approveExercises,
   createChildProfile,
@@ -12,7 +15,9 @@ import {
   enrollChildInClass,
   getChildProfileForUser,
   getChildProgress,
+  getAssignedMaterialForChild,
   getParentDashboard,
+  getSessionById,
   getTeacherDashboard,
   isTeacher,
   linkParentToFamily,
@@ -20,11 +25,12 @@ import {
   listTeacherMaterials,
   mayAccessChildProfile,
   saveGeneratedExercises,
+  saveQuizAttempt,
   seedDemoCohort,
   saveReadingSession,
   setUserRole,
 } from "../readerDb";
-import { storagePut } from "../storage";
+import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
 
 const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
@@ -48,6 +54,10 @@ function requireTeacher(role: string) {
 function llmContentAsText(content: string | unknown[]): string {
   if (typeof content === "string") return content;
   return content.map(part => "text" in (part as object) ? (part as { text: string }).text : "").join("");
+}
+
+function safeFilename(filename: string) {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-180) || "reading-material";
 }
 
 export const readerLeaderRouter = router({
@@ -79,6 +89,18 @@ export const readerLeaderRouter = router({
     }),
   }),
   materials: router({
+    extractUpload: protectedProcedure.input(z.object({
+      sourceFilename: z.string().trim().min(1).max(255),
+      sourceFileBase64: z.string().min(1).max(7_000_000),
+      sourceFileMime: z.string().trim().min(1).max(120),
+    })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const bytes = Buffer.from(input.sourceFileBase64, "base64");
+      if (bytes.byteLength === 0 || bytes.byteLength > 5_000_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Use a reading document under 5 MB." });
+      const extracted = await extractReadingMaterial(bytes, input.sourceFileMime, input.sourceFilename);
+      const stored = await storagePut(`reader-leader/materials/${ctx.user.id}/${safeFilename(input.sourceFilename)}`, bytes, input.sourceFileMime);
+      return { ...extracted, sourceFilename: input.sourceFilename, storageKey: stored.key };
+    }),
     assignedForMe: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Assigned reading materials are available to child accounts." });
       return listAssignedMaterialsForChild(ctx.user.id);
@@ -92,15 +114,17 @@ export const readerLeaderRouter = router({
       readingLevel: z.string().trim().min(2).max(80),
       sourceText: z.string().trim().min(80).max(8000),
       sourceFilename: z.string().trim().min(1).max(255).optional(),
-      sourceFileBase64: z.string().max(1_500_000).optional(),
+      sourceFileBase64: z.string().max(7_000_000).optional(),
       sourceFileMime: z.string().max(120).optional(),
+      storageKey: z.string().max(512).optional(),
     })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
-      let storageKey: string | undefined;
+      let storageKey = input.storageKey;
+      if (storageKey && !storageKey.startsWith(`reader-leader/materials/${ctx.user.id}/`)) throw new TRPCError({ code: "FORBIDDEN", message: "This uploaded document does not belong to your account." });
       if (input.sourceFileBase64 && input.sourceFilename) {
         const bytes = Buffer.from(input.sourceFileBase64, "base64");
-        if (bytes.byteLength > 1_000_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Use a source document under 1 MB." });
-        const stored = await storagePut(`reader-leader/materials/${ctx.user.id}/${input.sourceFilename}`, bytes, input.sourceFileMime || "text/plain");
+        if (bytes.byteLength > 5_000_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Use a source document under 5 MB." });
+        const stored = await storagePut(`reader-leader/materials/${ctx.user.id}/${safeFilename(input.sourceFilename)}`, bytes, input.sourceFileMime || "text/plain");
         storageKey = stored.key;
       }
       return createReadingMaterial({ teacherUserId: ctx.user.id, title: input.title, readingLevel: input.readingLevel, sourceText: input.sourceText, sourceFilename: input.sourceFilename, storageKey });
@@ -128,6 +152,29 @@ export const readerLeaderRouter = router({
     }),
   }),
   sessions: router({
+    processAndSave: protectedProcedure.input(z.object({
+      childProfileId: z.number().int().positive(),
+      materialId: z.number().int().positive().nullable().optional(),
+      storyTitle: z.string().min(3).max(180),
+      expectedText: z.string().min(20).max(8000),
+      audioBase64: z.string().min(1).max(6_000_000),
+      audioMime: z.string().optional(),
+      durationSeconds: z.number().int().min(10).max(900),
+    })).mutation(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can save this reading session." });
+      const bytes = Buffer.from(input.audioBase64, "base64");
+      if (bytes.byteLength === 0 || bytes.byteLength > 4_500_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Keep this practice recording under 4.5 MB and try again." });
+      const mimeType = input.audioMime?.startsWith("audio/") ? input.audioMime : "audio/webm";
+      const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("wav") ? "wav" : "webm";
+      const stored = await storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType);
+      const transcription = await (await import("../_core/voiceTranscription")).transcribeAudio({ audioUrl: await storageGetSignedUrl(stored.key), language: "en", prompt: "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes." });
+      if ("error" in transcription) throw new Error(transcription.error);
+      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds);
+      const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, practiceWords: analysis.practiceWords, interventions });
+      return { session, analysis };
+    }),
     save: protectedProcedure.input(z.object({
       childProfileId: z.number().int().positive(),
       materialId: z.number().int().positive().nullable().optional(),
@@ -159,6 +206,46 @@ export const readerLeaderRouter = router({
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This child profile is not available to your account." });
       return getChildProgress(input.childProfileId);
+    }),
+    audioUrl: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const session = await getSessionById(input.sessionId);
+      if (!session || !session.audioStorageKey) throw new TRPCError({ code: "NOT_FOUND", message: "This saved session does not have an audio recording." });
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, session.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This recording is not available to your account." });
+      return storageGet(session.audioStorageKey);
+    }),
+  }),
+  quizzes: router({
+    forAssignedMaterial: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      if (ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Quizzes are available to child accounts." });
+      const material = await getAssignedMaterialForChild(ctx.user.id, input.materialId);
+      if (!material?.exerciseSet) throw new TRPCError({ code: "NOT_FOUND", message: "There is no approved quiz for this reading passage yet." });
+      return { materialId: material.id, title: material.title, activity: material.exerciseSet.activity, questions: material.exerciseSet.questions.map(question => ({ prompt: question.prompt, options: question.options })) };
+    }),
+    submit: protectedProcedure.input(z.object({
+      childProfileId: z.number().int().positive(),
+      materialId: z.number().int().positive(),
+      answers: z.array(z.object({ questionIndex: z.number().int().min(0), selectedAnswer: z.string().min(1).max(120) })).min(1).max(4),
+    })).mutation(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can submit this quiz." });
+      const material = await getAssignedMaterialForChild(ctx.user.id, input.materialId);
+      if (!material?.exerciseSet) throw new TRPCError({ code: "NOT_FOUND", message: "This assigned passage does not have an approved quiz." });
+      const answers = scoreQuiz(material.exerciseSet.questions, input.answers);
+      const score = answers.filter(answer => answer.correct).length;
+      const attempt = await saveQuizAttempt({ childProfileId: input.childProfileId, materialId: input.materialId, answers, score, totalQuestions: material.exerciseSet.questions.length });
+      return { attempt, score, totalQuestions: material.exerciseSet.questions.length, explanations: material.exerciseSet.questions.map((question, index) => ({ questionIndex: index, explanation: question.explanation })) };
+    }),
+  }),
+  reports: router({
+    download: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This report is not available to your account." });
+      if (input.audience === "child" && ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      if (input.audience === "parent" && ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      if (input.audience === "teacher" && !isTeacher(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      const progress = await getChildProgress(input.childProfileId);
+      return createReadingReport({ audience: input.audience, childName: progress.profile.displayName, bookBand: progress.profile.bookBand, sessions: progress.sessions });
     }),
   }),
   dashboards: router({

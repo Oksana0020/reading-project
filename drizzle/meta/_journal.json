@@ -22,6 +22,13 @@
       "when": 1788374760745,
       "tag": "0002_clear_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1788375725210,
+      "tag": "0003_hesitant_terror",
+      "breakpoints": true
     }
   ]
 }

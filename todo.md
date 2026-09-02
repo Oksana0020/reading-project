@@ -22,3 +22,13 @@
 - [x] Update the role-selection experience to use account-style login cards rather than a visible demo switcher.
 - [x] Add unit tests for roles, relationship authorisation, session storage, and exercise-generation safeguards.
 - [x] Validate the protected flows, teacher upload/exercise experience, session persistence, and reference-aligned visual upgrades. (Verified type checking, nine unit tests, database migrations, responsive account-entry and library layouts, and a clean post-restart service start.)
+- [x] Store session audio references and permit authorised child, parent, and teacher playback for saved sessions.
+- [x] Create downloadable child celebration, parent progress, and teacher running-record reports with role-aware data scopes.
+- [x] Extend the material schema and upload flow for PDF and DOCX source files, server-side text extraction, and teacher preview.
+- [x] Add teacher-approved comprehension quiz delivery and child answer storage for assigned passages.
+- [x] Build a child-friendly post-reading quiz screen with supportive feedback and completion state.
+- [x] Correct the library identity label to show Amina’s Reading Progress for the guided child experience.
+- [x] Test audio playback, report downloads, document extraction, quiz completion, and role access controls. (Verified protected server contracts, role-scoped controls, responsive child library, document extraction service behaviour, report construction, quiz scoring, and 15 automated tests.)
+- [x] Validate actual PDF and DOCX extraction against the supplied project reference documents. (DOCX: 2,424 characters extracted; PDF: 5,424 characters extracted; neither result was truncated.)
+- [ ] Complete browser-based checks for authorised recording playback, report download triggers, and assigned-passage quiz completion with an authenticated test account.
+- [ ] Complete the authenticated browser checks when the external human-verification service allows account access; no CAPTCHA bypass will be attempted.
