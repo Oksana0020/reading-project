@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import { publicProcedure, router } from "./_core/trpc";
 import { analyseReadingText } from "./reader";
 import { readerLeaderRouter } from "./routers/readerLeader";
+import { verifyDemoCredentials } from "./demoAuth";
+import { provisionLocalDemoCohort } from "./readerDb";
 import { storageGetSignedUrl, storagePut } from "./storage";
 
 const MAX_AUDIO_BYTES = 4_500_000;
@@ -25,6 +29,21 @@ export const appRouter = router({
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
+    }),
+  }),
+  demoAccess: router({
+    verify: publicProcedure.input(z.object({ username: z.string().min(1).max(32), password: z.string().min(1).max(128) })).query(({ input }) => {
+      const account = verifyDemoCredentials(input.username, input.password);
+      if (!account) throw new TRPCError({ code: "UNAUTHORIZED", message: "That demo username or password does not match." });
+      return { username: account.username, role: account.role, name: account.name };
+    }),
+    login: publicProcedure.input(z.object({ username: z.string().min(1).max(32), password: z.string().min(1).max(128) })).mutation(async ({ ctx, input }) => {
+      const account = verifyDemoCredentials(input.username, input.password);
+      if (!account) throw new TRPCError({ code: "UNAUTHORIZED", message: "That demo username or password does not match." });
+      await provisionLocalDemoCohort();
+      const sessionToken = await sdk.createSessionToken(account.openId, { name: account.name, expiresInMs: ONE_YEAR_MS });
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(ctx.req), maxAge: ONE_YEAR_MS });
+      return { success: true, role: account.role, name: account.name };
     }),
   }),
   reading: router({

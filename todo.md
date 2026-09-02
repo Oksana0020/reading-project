@@ -32,3 +32,21 @@
 - [x] Validate actual PDF and DOCX extraction against the supplied project reference documents. (DOCX: 2,424 characters extracted; PDF: 5,424 characters extracted; neither result was truncated.)
 - [x] Attempt browser-based checks for authorised recording playback, report download triggers, and assigned-passage quiz completion with an authenticated test account. (Blocked by the external human-verification service; corresponding protected-server contracts and automated coverage passed.)
 - [x] Document the authenticated browser-check limitation. No CAPTCHA bypass was attempted; retry the live-account checks when the external human-verification service permits access.
+- [x] Add school-brand settings and branded PDF export for child celebration, parent progress, and teacher running-record reports.
+- [x] Add teacher comments and actionable feedback on individual stored reading-session reports.
+- [x] Add child quiz retry support, saved attempt history, and a progress-history dashboard.
+- [x] Add clearly labelled local demo accounts for child1, teacher2, and parent3 without requiring Google sign-in.
+- [x] Refresh the role-selection portal with warm off-white surfaces, rounded cards, colourful role badges, and full action buttons.
+- [x] Remove demo passwords from browser code and verify password entry remains server-only in the local demo sign-in flow. (Superseded by the verified completion entry below; retained as history.)
+- [x] Remove demo passwords from browser code and verify password entry remains server-only in the local demo sign-in flow.
+- [x] Populate the local demo accounts with an approved class passage, a stored session, and a quiz-ready child assignment for end-to-end feature exploration.
+- [x] Test branded exports, session feedback, quiz retries/history, local demo access, and responsive portal changes. (Validated 19 automated tests, live demo sign-in, assigned-material visibility, report generation, and quiz scoring; the preview automation did not reliably activate the visible completion control, with no browser error.)
+- [x] Verify the teacher session-feedback UI with the teacher local demo account.
+- [x] Verify each role’s branded PDF download control is reachable in its authorised local demo view.
+- [x] Capture visible parent-dashboard evidence for the authorised branded PDF download control.
+- [x] Verify the child quiz retry and progress-history UI with the assigned local demo passage.
+- [x] Add an explicit guided-session completion fallback that reliably opens the child report and teacher-assigned quiz when recording controls are unavailable. (Superseded by the verified completion entry below; retained as history.)
+- [x] Add an explicit guided-session completion fallback that reliably opens the child report and teacher-assigned quiz when recording controls are unavailable.
+- [x] Correct the assigned-passage guided transcript fallback so teacher materials without a built-in demo transcript complete into the child report and quiz.
+- [x] Expose a child-friendly celebration PDF download from the saved-session library view.
+- [x] Correct local teacher and parent demo routing so each account opens its authorised dashboard rather than the child library.

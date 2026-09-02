@@ -7,6 +7,7 @@ import { assertSafeExerciseSet } from "../exerciseSafety";
 import { extractReadingMaterial } from "../documentExtraction";
 import { createReadingReport } from "../readerReports";
 import { scoreQuiz } from "../quizPolicy";
+import { createBrandedPdfReport } from "../pdfReports";
 import {
   approveExercises,
   createChildProfile,
@@ -26,6 +27,12 @@ import {
   mayAccessChildProfile,
   saveGeneratedExercises,
   saveQuizAttempt,
+  addSessionComment,
+  getSessionComments,
+  getQuizHistory,
+  getReportContext,
+  getSchoolBrandingForTeacher,
+  saveSchoolBranding,
   seedDemoCohort,
   saveReadingSession,
   setUserRole,
@@ -214,6 +221,21 @@ export const readerLeaderRouter = router({
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This recording is not available to your account." });
       return storageGet(session.audioStorageKey);
     }),
+    comments: protectedProcedure.input(z.object({ sessionId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const session = await getSessionById(input.sessionId);
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Reading session not found." });
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, session.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This session is not available to your account." });
+      return getSessionComments([input.sessionId]);
+    }),
+    addComment: protectedProcedure.input(z.object({ sessionId: z.number().int().positive(), comment: z.string().trim().min(2).max(1200) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const session = await getSessionById(input.sessionId);
+      if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Reading session not found." });
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, session.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This child is not assigned to your class." });
+      return addSessionComment({ sessionId: input.sessionId, teacherUserId: ctx.user.id, comment: input.comment });
+    }),
   }),
   quizzes: router({
     forAssignedMaterial: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -236,6 +258,11 @@ export const readerLeaderRouter = router({
       const attempt = await saveQuizAttempt({ childProfileId: input.childProfileId, materialId: input.materialId, answers, score, totalQuestions: material.exerciseSet.questions.length });
       return { attempt, score, totalQuestions: material.exerciseSet.questions.length, explanations: material.exerciseSet.questions.map((question, index) => ({ questionIndex: index, explanation: question.explanation })) };
     }),
+    history: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Quiz history is available to the signed-in child." });
+      return getQuizHistory(input.childProfileId);
+    }),
   }),
   reports: router({
     download: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
@@ -246,6 +273,23 @@ export const readerLeaderRouter = router({
       if (input.audience === "teacher" && !isTeacher(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
       const progress = await getChildProgress(input.childProfileId);
       return createReadingReport({ audience: input.audience, childName: progress.profile.displayName, bookBand: progress.profile.bookBand, sessions: progress.sessions });
+    }),
+    downloadPdf: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This report is not available to your account." });
+      if (input.audience === "child" && ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      if (input.audience === "parent" && ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      if (input.audience === "teacher" && !isTeacher(ctx.user.role)) throw new TRPCError({ code: "FORBIDDEN", message: "Use the report designed for your account." });
+      const context = await getReportContext(input.childProfileId);
+      const data = await createBrandedPdfReport({ audience: input.audience, childName: context.profile.displayName, bookBand: context.profile.bookBand, sessions: context.sessions, branding: context.branding, comments: context.comments });
+      return { filename: `${context.profile.displayName.toLowerCase().replace(/\s+/g, "-")}-${input.audience}-reading-report.pdf`, mimeType: "application/pdf", dataBase64: data.toString("base64") };
+    }),
+  }),
+  branding: router({
+    mine: protectedProcedure.query(async ({ ctx }) => { requireTeacher(ctx.user.role); return getSchoolBrandingForTeacher(ctx.user.id); }),
+    save: protectedProcedure.input(z.object({ schoolName: z.string().trim().min(2).max(120), accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/), footerLine: z.string().trim().min(4).max(180) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return saveSchoolBranding(ctx.user.id, input);
     }),
   }),
   dashboards: router({

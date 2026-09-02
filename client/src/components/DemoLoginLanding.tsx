@@ -1,0 +1,28 @@
+import { trpc } from "@/lib/trpc";
+import { ArrowRight, Home, LockKeyhole, Mic, Sparkles, UsersRound } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+const demoAccounts = [
+  { username: "child1", role: "Child", title: "Continue as Child", copy: "Stories, kind coaching, and a progress trail made just for Amina.", accent: "sky", Icon: Mic },
+  { username: "teacher2", role: "Teacher", title: "Continue as Teacher", copy: "Review reading moments, share feedback, and create engaging activities.", accent: "mint", Icon: UsersRound },
+  { username: "parent3", role: "Parent", title: "Continue as Parent", copy: "Celebrate small wins and plan five friendly reading minutes together.", accent: "coral", Icon: Home },
+] as const;
+
+export function DemoLoginLanding() {
+  const [busyAccount, setBusyAccount] = useState<string | null>(null);
+  const [activeAccount, setActiveAccount] = useState<(typeof demoAccounts)[number] | null>(null);
+  const [password, setPassword] = useState("");
+  const login = trpc.demoAccess.login.useMutation({
+    onSuccess: () => window.location.reload(),
+    onError: error => { setBusyAccount(null); toast(error.message || "That demo account could not be opened."); },
+  });
+  const enterDemo = () => {
+    if (!activeAccount) return;
+    if (!password) return toast("Enter the demo password to continue.");
+    setBusyAccount(activeAccount.username);
+    login.mutate({ username: activeAccount.username, password });
+  };
+
+  return <main className="portal-page"><div className="portal-orb portal-orb-one" /><div className="portal-orb portal-orb-two" /><section className="portal-shell"><div className="portal-brand"><span className="portal-brand-mark"><span /></span><strong>Reader Leader</strong><small>READ · GROW · LEAD</small></div><div className="portal-intro"><div className="portal-kicker"><Sparkles size={14} /> Welcome to your reading space</div><h1>Let’s make reading<br /><em>feel brilliant.</em></h1><p>Pick a demo account to explore the right Reader Leader space. Each card opens a private, role-aware view—no Google account needed.</p></div><div className="portal-cards">{demoAccounts.map(account => <article className={`portal-card ${account.accent} ${activeAccount?.username === account.username ? "chosen" : ""}`} key={account.username}><div className="role-badge"><account.Icon size={30} strokeWidth={2.4} /></div><div><span className="portal-role">{account.role} demo</span><h2>{account.role}</h2><p>{account.copy}</p></div><div className="credential-chip"><LockKeyhole size={13} /><span>Demo username: <b>{account.username}</b></span></div><button onClick={() => { setActiveAccount(account); setPassword(""); }} disabled={busyAccount !== null}><span>{account.title}</span><ArrowRight size={18} /></button></article>)}</div>{activeAccount && <form className="demo-password-form" onSubmit={event => { event.preventDefault(); enterDemo(); }}><div><b>Sign in as {activeAccount.role}</b><span>Username: {activeAccount.username}</span></div><label>Demo password<input type="password" autoFocus value={password} onChange={event => setPassword(event.target.value)} placeholder="Enter password" /></label><button type="submit" disabled={busyAccount !== null}>{busyAccount ? "Opening…" : "Open my reading space"} <ArrowRight size={16} /></button></form>}<p className="portal-foot"><LockKeyhole size={14} /> <strong>Demo-only access.</strong> These local accounts contain sample learning records and are not for real pupils or production use.</p></section></main>;
+}

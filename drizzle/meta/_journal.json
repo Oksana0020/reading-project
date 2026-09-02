@@ -29,6 +29,13 @@
       "when": 1788375725210,
       "tag": "0003_hesitant_terror",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1788379830932,
+      "tag": "0004_sticky_rage",
+      "breakpoints": true
     }
   ]
 }

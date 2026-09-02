@@ -10,6 +10,8 @@ import {
   readingMaterials,
   readingSessions,
   quizAttempts,
+  schoolBranding,
+  sessionComments,
   type ExerciseSet,
   type QuizAnswer,
   type StoredIntervention,
@@ -191,6 +193,46 @@ export async function saveQuizAttempt(input: { childProfileId: number; materialI
   return attempt;
 }
 
+export async function getQuizHistory(childProfileId: number) {
+  const db = await requireDb();
+  return db.select().from(quizAttempts).where(eq(quizAttempts.childProfileId, childProfileId)).orderBy(desc(quizAttempts.completedAt)).limit(12);
+}
+
+export async function getSchoolBrandingForTeacher(teacherUserId: number) {
+  const db = await requireDb();
+  const [branding] = await db.select().from(schoolBranding).where(eq(schoolBranding.teacherUserId, teacherUserId)).limit(1);
+  return branding ?? { teacherUserId, schoolName: "Reader Leader School", accentColor: "#2563EB", footerLine: "Every reader can grow with practice and encouragement." };
+}
+
+export async function saveSchoolBranding(teacherUserId: number, branding: { schoolName: string; accentColor: string; footerLine: string }) {
+  const db = await requireDb();
+  await db.insert(schoolBranding).values({ teacherUserId, ...branding }).onDuplicateKeyUpdate({ set: branding });
+  return getSchoolBrandingForTeacher(teacherUserId);
+}
+
+export async function addSessionComment(input: { sessionId: number; teacherUserId: number; comment: string }) {
+  const db = await requireDb();
+  await db.insert(sessionComments).values(input);
+  const [saved] = await db.select().from(sessionComments).where(and(eq(sessionComments.sessionId, input.sessionId), eq(sessionComments.teacherUserId, input.teacherUserId))).orderBy(desc(sessionComments.id)).limit(1);
+  if (!saved) throw new Error("Could not save teacher feedback.");
+  return saved;
+}
+
+export async function getSessionComments(sessionIds: number[]) {
+  const db = await requireDb();
+  if (!sessionIds.length) return [];
+  return db.select().from(sessionComments).where(inArray(sessionComments.sessionId, sessionIds)).orderBy(desc(sessionComments.createdAt));
+}
+
+export async function getReportContext(childProfileId: number) {
+  const progress = await getChildProgress(childProfileId);
+  const db = await requireDb();
+  const [teacherLink] = await db.select({ teacherUserId: readerClasses.teacherUserId }).from(classEnrollments).innerJoin(readerClasses, eq(classEnrollments.classId, readerClasses.id)).where(eq(classEnrollments.childProfileId, childProfileId)).limit(1);
+  const branding = teacherLink ? await getSchoolBrandingForTeacher(teacherLink.teacherUserId) : { schoolName: "Reader Leader School", accentColor: "#2563EB", footerLine: "Every reader can grow with practice and encouragement." };
+  const comments = await getSessionComments(progress.sessions.map(session => session.id));
+  return { ...progress, branding, comments };
+}
+
 export async function getChildProgress(childProfileId: number) {
   const db = await requireDb();
   const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.id, childProfileId)).limit(1);
@@ -200,7 +242,7 @@ export async function getChildProgress(childProfileId: number) {
   const averageAccuracy = Math.round(sessions.reduce((sum, session) => sum + session.accuracy, 0) / total);
   const averageWcpm = Math.round(sessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / total);
   const practiceWords = Array.from(new Set(sessions.flatMap(session => session.practiceWords))).slice(0, 4);
-  return { profile, sessions, summary: { sessionsCompleted: sessions.length, averageAccuracy, averageWcpm, practiceWords } };
+  return { profile, sessions, quizHistory: await getQuizHistory(childProfileId), summary: { sessionsCompleted: sessions.length, averageAccuracy, averageWcpm, practiceWords } };
 }
 
 export async function getTeacherDashboard(teacherUserId: number) {
@@ -219,8 +261,9 @@ export async function getTeacherDashboard(teacherUserId: number) {
   });
   const needsReview = sessions.flatMap(session => session.interventions.filter(intervention => intervention.action === "teacher_review").map(intervention => ({ sessionId: session.id, childProfileId: session.childProfileId, storyTitle: session.storyTitle, ...intervention }))).slice(0, 5);
   const materials = await listTeacherMaterials(teacherUserId);
-  const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader" }));
-  return { classes, pupils, needsReview, materials, recentSessions };
+  const comments = await getSessionComments(sessions.map(session => session.id));
+  const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
+  return { classes, pupils, needsReview, materials, recentSessions, branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
 export async function getParentDashboard(parentUserId: number) {
@@ -272,4 +315,42 @@ export async function seedDemoCohort(adminUserId: number) {
     ]);
   }
   return { readerClass, childProfiles: [amina, leo], demoParentOpenId: parentUser.openId };
+}
+
+/** Provisions the three explicitly labelled local demo identities on first sign-in. */
+export async function provisionLocalDemoCohort() {
+  const db = await requireDb();
+  const ensureUser = async (openId: string, name: string, role: "child" | "teacher" | "parent") => {
+    await db.insert(users).values({ openId, name, loginMethod: "local-demo", role }).onDuplicateKeyUpdate({ set: { name, role, loginMethod: "local-demo" } });
+    const [user] = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+    if (!user) throw new Error("Could not prepare the local demo account.");
+    return user;
+  };
+  const teacher = await ensureUser("reader-leader-local-teacher2", "Ms Kelly", "teacher");
+  const child = await ensureUser("reader-leader-local-child1", "Amina Roe", "child");
+  const parent = await ensureUser("reader-leader-local-parent3", "Amina’s Parent", "parent");
+  await db.insert(childProfiles).values({ userId: child.id, displayName: "Amina Roe", bookBand: "Level 3 · Sky Blue", familyCode: "FAMILY-AMINA" }).onDuplicateKeyUpdate({ set: { displayName: "Amina Roe", bookBand: "Level 3 · Sky Blue" } });
+  const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.userId, child.id)).limit(1);
+  if (!profile) throw new Error("Could not prepare the child demo profile.");
+  await db.insert(readerClasses).values({ teacherUserId: teacher.id, name: "Ms Kelly’s Reading Class", joinCode: "CLASS-READ" }).onDuplicateKeyUpdate({ set: { name: "Ms Kelly’s Reading Class" } });
+  const [readerClass] = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacher.id)).limit(1);
+  if (!readerClass) throw new Error("Could not prepare the teacher demo class.");
+  await db.insert(classEnrollments).values({ classId: readerClass.id, childProfileId: profile.id }).onDuplicateKeyUpdate({ set: { classId: readerClass.id } });
+  await db.insert(familyLinks).values({ parentUserId: parent.id, childProfileId: profile.id }).onDuplicateKeyUpdate({ set: { parentUserId: parent.id } });
+  const [existingMaterial] = await db.select().from(readingMaterials).where(and(eq(readingMaterials.teacherUserId, teacher.id), eq(readingMaterials.title, "The Lantern in the Garden"))).limit(1);
+  const material = existingMaterial ?? (await (async () => {
+    await db.insert(readingMaterials).values({ teacherUserId: teacher.id, title: "The Lantern in the Garden", readingLevel: "Level 3 · Sky Blue", sourceText: "Amina carried a little lantern into the garden at dusk. The light made golden circles on the path. Near the tall gate, she saw a hedgehog sniffing beside the flowers. Amina stood very still, then watched it hurry safely under the hedge.", status: "assigned" });
+    const [created] = await db.select().from(readingMaterials).where(and(eq(readingMaterials.teacherUserId, teacher.id), eq(readingMaterials.title, "The Lantern in the Garden"))).limit(1);
+    if (!created) throw new Error("Could not prepare the assigned demo passage.");
+    return created;
+  })());
+  const exerciseSet: ExerciseSet = { vocabulary: [{ word: "lantern", childFriendlyMeaning: "a small lamp you can carry" }, { word: "dusk", childFriendlyMeaning: "the time when daylight is fading" }, { word: "hedgehog", childFriendlyMeaning: "a small animal with tiny spines" }], questions: [{ prompt: "What did Amina carry into the garden?", options: ["A lantern", "A kite", "A basket"], answer: "A lantern", explanation: "The story says Amina carried a little lantern." }, { prompt: "What animal did Amina see?", options: ["A hedgehog", "A fox", "A rabbit"], answer: "A hedgehog", explanation: "A hedgehog was sniffing beside the flowers." }, { prompt: "How did Amina help the animal?", options: ["She stood still", "She chased it", "She picked it up"], answer: "She stood still", explanation: "Amina stood very still and watched it safely." }], activity: "Draw the golden circles the lantern made, then tell someone which detail you remember." };
+  await db.insert(readingExercises).values({ materialId: material.id, exerciseSet, modelName: "teacher-demo", approvedAt: new Date() }).onDuplicateKeyUpdate({ set: { exerciseSet, approvedAt: new Date() } });
+  await db.update(readingMaterials).set({ status: "assigned" }).where(eq(readingMaterials.id, material.id));
+  await db.insert(materialAssignments).values({ classId: readerClass.id, materialId: material.id }).onDuplicateKeyUpdate({ set: { materialId: material.id } });
+  const [existingSession] = await db.select({ id: readingSessions.id }).from(readingSessions).where(eq(readingSessions.childProfileId, profile.id)).limit(1);
+  if (!existingSession) await db.insert(readingSessions).values({ childProfileId: profile.id, materialId: material.id, storyTitle: "The Lantern in the Garden", transcript: "Amina carried a little lantern into the garden at dusk.", accuracy: 91, wordsCorrectPerMinute: 108, durationSeconds: 72, completed: 1, practiceWords: ["lantern", "hedgehog"], interventions: [{ word: "hedgehog", action: "teacher_review", note: "Possible pronunciation variation — the coach stayed silent for teacher review." }] });
+  const [existingQuizAttempt] = await db.select({ id: quizAttempts.id }).from(quizAttempts).where(and(eq(quizAttempts.childProfileId, profile.id), eq(quizAttempts.materialId, material.id))).limit(1);
+  if (!existingQuizAttempt) await db.insert(quizAttempts).values({ childProfileId: profile.id, materialId: material.id, score: 2, totalQuestions: 3, answers: [{ questionIndex: 0, selectedAnswer: "A lantern", correct: true }, { questionIndex: 1, selectedAnswer: "A rabbit", correct: false }, { questionIndex: 2, selectedAnswer: "She stood still", correct: true }] });
+  return { child, teacher, parent, profile, readerClass };
 }

@@ -24,6 +24,15 @@ export const readerClasses = mysqlTable("readerClasses", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const schoolBranding = mysqlTable("schoolBranding", {
+  id: int("id").autoincrement().primaryKey(),
+  teacherUserId: int("teacherUserId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  schoolName: varchar("schoolName", { length: 120 }).notNull().default("Reader Leader School"),
+  accentColor: varchar("accentColor", { length: 12 }).notNull().default("#2563EB"),
+  footerLine: varchar("footerLine", { length: 180 }).notNull().default("Every reader can grow with practice and encouragement."),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export const childProfiles = mysqlTable("childProfiles", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
@@ -95,6 +104,14 @@ export const readingSessions = mysqlTable("readingSessions", {
   completed: int("completed").notNull().default(1),
   practiceWords: json("practiceWords").$type<string[]>().notNull(),
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const sessionComments = mysqlTable("sessionComments", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionId: int("sessionId").notNull().references(() => readingSessions.id, { onDelete: "cascade" }),
+  teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  comment: text("comment").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
