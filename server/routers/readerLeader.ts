@@ -10,6 +10,8 @@ import { scoreQuiz } from "../quizPolicy";
 import { createBrandedPdfReport } from "../pdfReports";
 import {
   approveExercises,
+  addLearnerToTeacherClass,
+  createAdditionalClassForTeacher,
   createChildProfile,
   createClassForTeacher,
   createReadingMaterial,
@@ -23,6 +25,7 @@ import {
   getSessionPlayback,
   getTeacherMaterialReview,
   getTeacherDashboard,
+  getTeacherMonthlyTrendExport,
   isTeacher,
   linkParentToFamily,
   listAssignedMaterialsForChild,
@@ -39,10 +42,13 @@ import {
   seedDemoCohort,
   saveReadingSession,
   saveLearnerReadingSettings,
+  saveHomePracticeChecklist,
+  markParentReminderRead,
   setUserRole,
 } from "../readerDb";
 import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
 import { buildWordTimings } from "../wordTiming";
+import { createMonthlyTrendCsv, monthlyTrendFilename } from "../trendExport";
 
 const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
@@ -272,6 +278,29 @@ export const readerLeaderRouter = router({
       return saveLearnerReadingSettings(input.childProfileId, { defaultReadingMode: input.defaultReadingMode, targetWcpm: input.targetWcpm });
     }),
   }),
+  classes: router({
+    create: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(120) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return createAdditionalClassForTeacher(ctx.user.id, input.name, code("CLASS"));
+    }),
+    addLearner: protectedProcedure.input(z.object({ classId: z.number().int().positive(), displayName: z.string().trim().min(2).max(80), bookBand: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return addLearnerToTeacherClass({ teacherUserId: ctx.user.id, ...input, familyCode: code("FAM") });
+    }),
+  }),
+  homePractice: router({
+    saveChecklist: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), completedSteps: z.array(z.boolean()).max(3) })).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "Home-practice checklists are available to linked parent accounts." });
+      const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
+      if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not linked to your family account." });
+      return saveHomePracticeChecklist(ctx.user.id, input.childProfileId, input.completedSteps);
+    }),
+    markReminderRead: protectedProcedure.input(z.object({ reminderId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "This reminder centre is available to parent accounts." });
+      await markParentReminderRead(ctx.user.id, input.reminderId);
+      return { success: true } as const;
+    }),
+  }),
   quizzes: router({
     forAssignedMaterial: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).query(async ({ ctx, input }) => {
       if (ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Quizzes are available to child accounts." });
@@ -300,6 +329,11 @@ export const readerLeaderRouter = router({
     }),
   }),
   reports: router({
+    monthlyTrendCsv: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional() })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const trend = await getTeacherMonthlyTrendExport(ctx.user.id, input.classId);
+      return { filename: monthlyTrendFilename(trend.className), csv: createMonthlyTrendCsv(trend.className, trend.points) };
+    }),
     download: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This report is not available to your account." });

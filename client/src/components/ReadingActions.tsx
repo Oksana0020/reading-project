@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 type Audience = "child" | "parent" | "teacher";
 
-function downloadText(filename: string, content: string, mimeType: string) {
+export function downloadText(filename: string, content: string, mimeType: string) {
   const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");

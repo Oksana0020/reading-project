@@ -4,8 +4,10 @@ import {
   childProfiles,
   classEnrollments,
   familyLinks,
+  homePracticeChecklists,
   learnerReadingSettings,
   materialAssignments,
+  parentReminders,
   readerClasses,
   readingExercises,
   readingMaterials,
@@ -25,6 +27,7 @@ import { getDb } from "./db";
 import { storagePut } from "./storage";
 import { buildMonthlyAssessmentTrend, minutesReadThisWeek } from "./learningAnalytics";
 import { createDemoPlaybackTone } from "./demoPlaybackFixture";
+import { isPracticeChecklistComplete, normalisePracticeSteps, practiceChecklistDate } from "./homePractice";
 
 export type AuthenticatedReader = { id: number; role: AccountRole };
 
@@ -86,6 +89,30 @@ export async function createClassForTeacher(teacherUserId: number, name: string,
   const [readerClass] = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId)).limit(1);
   if (!readerClass) throw new Error("Could not create class.");
   return readerClass;
+}
+
+export async function createAdditionalClassForTeacher(teacherUserId: number, name: string, joinCode: string) {
+  const db = await requireDb();
+  await db.insert(readerClasses).values({ teacherUserId, name, joinCode });
+  const [readerClass] = await db.select().from(readerClasses).where(eq(readerClasses.joinCode, joinCode)).limit(1);
+  if (!readerClass) throw new Error("Could not create the new class.");
+  return readerClass;
+}
+
+export async function addLearnerToTeacherClass(input: { teacherUserId: number; classId: number; displayName: string; bookBand: string; familyCode: string }) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, input.classId), eq(readerClasses.teacherUserId, input.teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  const learnerOpenId = `teacher-roster-${input.teacherUserId}-${crypto.randomUUID()}`;
+  await db.insert(users).values({ openId: learnerOpenId, name: input.displayName, loginMethod: "teacher-roster", role: "child" });
+  const [learnerUser] = await db.select().from(users).where(eq(users.openId, learnerOpenId)).limit(1);
+  if (!learnerUser) throw new Error("Could not create the learner record.");
+  await db.insert(childProfiles).values({ userId: learnerUser.id, displayName: input.displayName, bookBand: input.bookBand, familyCode: input.familyCode });
+  const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.userId, learnerUser.id)).limit(1);
+  if (!profile) throw new Error("Could not create the learner profile.");
+  await db.insert(classEnrollments).values({ classId: readerClass.id, childProfileId: profile.id });
+  await db.insert(learnerReadingSettings).values(defaultLearnerSettings(profile.id)).onDuplicateKeyUpdate({ set: { childProfileId: profile.id } });
+  return { readerClass, profile };
 }
 
 export async function linkParentToFamily(parentUserId: number, familyCode: string) {
@@ -296,7 +323,7 @@ export async function getChildProgress(childProfileId: number) {
 export async function getTeacherDashboard(teacherUserId: number) {
   const db = await requireDb();
   const classes = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
-  if (!classes.length) return { classes, pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  if (!classes.length) return { classes: [], pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], branding: await getSchoolBrandingForTeacher(teacherUserId) };
   const classIds = classes.map(readerClass => readerClass.id);
   const enrolled = await db.select({ childProfileId: classEnrollments.childProfileId, classId: classEnrollments.classId, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(classEnrollments).innerJoin(childProfiles, eq(classEnrollments.childProfileId, childProfiles.id)).where(inArray(classEnrollments.classId, classIds));
@@ -307,21 +334,75 @@ export async function getTeacherDashboard(teacherUserId: number) {
     const pupilSessions = sessions.filter(session => session.childProfileId === pupil.childProfileId);
     const count = pupilSessions.length || 1;
     const settings = settingsRows.find(item => item.childProfileId === pupil.childProfileId) ?? defaultLearnerSettings(pupil.childProfileId);
-    return { ...pupil, sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count), settings };
+    return { ...pupil, className: classes.find(readerClass => readerClass.id === pupil.classId)?.name ?? "Class", sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count), settings };
+  });
+  const classSummaries = classes.map(readerClass => {
+    const classPupils = pupils.filter(pupil => pupil.classId === readerClass.id);
+    const classSessions = sessions.filter(session => classPupils.some(pupil => pupil.childProfileId === session.childProfileId));
+    const trackedPupils = classPupils.filter(pupil => pupil.sessionCount > 0);
+    const pupilCount = trackedPupils.length || 1;
+    return { ...readerClass, pupilCount: classPupils.length, averageAccuracy: Math.round(trackedPupils.reduce((sum, pupil) => sum + pupil.accuracy, 0) / pupilCount), averageWcpm: Math.round(trackedPupils.reduce((sum, pupil) => sum + pupil.wcpm, 0) / pupilCount), assessmentTrend: buildMonthlyAssessmentTrend(classSessions) };
   });
   const needsReview = sessions.flatMap(session => session.interventions.filter(intervention => intervention.action === "teacher_review").map(intervention => ({ sessionId: session.id, childProfileId: session.childProfileId, storyTitle: session.storyTitle, ...intervention }))).slice(0, 5);
   const materials = await listTeacherMaterials(teacherUserId);
   const comments = await getSessionComments(sessions.map(session => session.id));
   const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
-  return { classes, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  return { classes: classSummaries, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), branding: await getSchoolBrandingForTeacher(teacherUserId) };
+}
+
+export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number) {
+  const dashboard = await getTeacherDashboard(teacherUserId);
+  const selectedClass = classId ? dashboard.classes.find(readerClass => readerClass.id === classId) : undefined;
+  if (classId && !selectedClass) throw new Error("This class is not available to your account.");
+  return { className: selectedClass?.name ?? "All teacher classes", points: selectedClass?.assessmentTrend ?? dashboard.classAssessmentTrend };
+}
+
+export async function getHomePracticeChecklist(parentUserId: number, childProfileId: number, now = new Date()) {
+  const db = await requireDb();
+  const checklistDate = practiceChecklistDate(now);
+  const [checklist] = await db.select().from(homePracticeChecklists).where(and(eq(homePracticeChecklists.parentUserId, parentUserId), eq(homePracticeChecklists.childProfileId, childProfileId), eq(homePracticeChecklists.checklistDate, checklistDate))).limit(1);
+  return checklist ?? { parentUserId, childProfileId, checklistDate, completedSteps: normalisePracticeSteps([]), completedAt: null, updatedAt: now };
+}
+
+export async function saveHomePracticeChecklist(parentUserId: number, childProfileId: number, completedSteps: boolean[], now = new Date()) {
+  const db = await requireDb();
+  const checklistDate = practiceChecklistDate(now);
+  const steps = normalisePracticeSteps(completedSteps);
+  const completed = isPracticeChecklistComplete(steps);
+  const [existing] = await db.select().from(homePracticeChecklists).where(and(eq(homePracticeChecklists.parentUserId, parentUserId), eq(homePracticeChecklists.childProfileId, childProfileId), eq(homePracticeChecklists.checklistDate, checklistDate))).limit(1);
+  if (existing) await db.update(homePracticeChecklists).set({ completedSteps: steps, completedAt: completed ? existing.completedAt ?? now : null }).where(eq(homePracticeChecklists.id, existing.id));
+  else await db.insert(homePracticeChecklists).values({ parentUserId, childProfileId, checklistDate, completedSteps: steps, completedAt: completed ? now : null });
+  const [checklist] = await db.select().from(homePracticeChecklists).where(and(eq(homePracticeChecklists.parentUserId, parentUserId), eq(homePracticeChecklists.childProfileId, childProfileId), eq(homePracticeChecklists.checklistDate, checklistDate))).limit(1);
+  if (!checklist) throw new Error("Could not save home-practice progress.");
+  let reminderCreated = false;
+  if (completed) {
+    const [existingReminder] = await db.select({ id: parentReminders.id }).from(parentReminders).where(eq(parentReminders.checklistId, checklist.id)).limit(1);
+    if (!existingReminder) {
+      const [profile] = await db.select({ displayName: childProfiles.displayName }).from(childProfiles).where(eq(childProfiles.id, childProfileId)).limit(1);
+      await db.insert(parentReminders).values({ parentUserId, childProfileId, checklistId: checklist.id, title: "Home practice complete", message: `${profile?.displayName ?? "Your reader"} completed today’s three home-practice steps. Celebrate the calm, focused effort.` });
+      reminderCreated = true;
+    }
+  }
+  return { checklist, reminderCreated };
+}
+
+export async function listParentReminders(parentUserId: number) {
+  const db = await requireDb();
+  return db.select({ id: parentReminders.id, childProfileId: parentReminders.childProfileId, childName: childProfiles.displayName, title: parentReminders.title, message: parentReminders.message, status: parentReminders.status, createdAt: parentReminders.createdAt, readAt: parentReminders.readAt })
+    .from(parentReminders).innerJoin(childProfiles, eq(parentReminders.childProfileId, childProfiles.id)).where(eq(parentReminders.parentUserId, parentUserId)).orderBy(desc(parentReminders.createdAt)).limit(12);
+}
+
+export async function markParentReminderRead(parentUserId: number, reminderId: number) {
+  const db = await requireDb();
+  await db.update(parentReminders).set({ status: "read", readAt: new Date() }).where(and(eq(parentReminders.id, reminderId), eq(parentReminders.parentUserId, parentUserId)));
 }
 
 export async function getParentDashboard(parentUserId: number) {
   const db = await requireDb();
   const children = await db.select({ childProfileId: childProfiles.id, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(familyLinks).innerJoin(childProfiles, eq(familyLinks.childProfileId, childProfiles.id)).where(eq(familyLinks.parentUserId, parentUserId));
-  const progress = await Promise.all(children.map(async child => ({ ...child, ...(await getChildProgress(child.childProfileId)) })));
-  return { children: progress };
+  const progress = await Promise.all(children.map(async child => ({ ...child, ...(await getChildProgress(child.childProfileId)), practiceChecklist: await getHomePracticeChecklist(parentUserId, child.childProfileId) })));
+  return { children: progress, reminders: await listParentReminders(parentUserId) };
 }
 
 /** Creates a clearly labelled cohort only when an administrator requests it from the dashboard. */

@@ -68,6 +68,30 @@ export const familyLinks = mysqlTable("familyLinks", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [unique("parent_child_unique").on(table.parentUserId, table.childProfileId)]);
 
+/** One parent-managed, three-step home-practice checklist per linked learner and UTC calendar day. */
+export const homePracticeChecklists = mysqlTable("homePracticeChecklists", {
+  id: int("id").autoincrement().primaryKey(),
+  parentUserId: int("parentUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  childProfileId: int("childProfileId").notNull().references(() => childProfiles.id, { onDelete: "cascade" }),
+  checklistDate: varchar("checklistDate", { length: 10 }).notNull(),
+  completedSteps: json("completedSteps").$type<boolean[]>().notNull(),
+  completedAt: timestamp("completedAt"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [unique("parent_child_practice_date_unique").on(table.parentUserId, table.childProfileId, table.checklistDate)]);
+
+/** An in-app notification is created once when a linked parent completes a learner's daily checklist. */
+export const parentReminders = mysqlTable("parentReminders", {
+  id: int("id").autoincrement().primaryKey(),
+  parentUserId: int("parentUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  childProfileId: int("childProfileId").notNull().references(() => childProfiles.id, { onDelete: "cascade" }),
+  checklistId: int("checklistId").notNull().unique().references(() => homePracticeChecklists.id, { onDelete: "cascade" }),
+  title: varchar("title", { length: 160 }).notNull(),
+  message: varchar("message", { length: 360 }).notNull(),
+  status: mysqlEnum("status", ["unread", "read"]).notNull().default("unread"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  readAt: timestamp("readAt"),
+});
+
 export const readingMaterials = mysqlTable("readingMaterials", {
   id: int("id").autoincrement().primaryKey(),
   teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),

@@ -1,0 +1,228 @@
+' Reader Leader — requested PlantUML diagrams
+' Render each @startuml / @enduml block independently if separate image files are needed.
+
+@startuml reader_leader_role_journey
+title Reader Leader — Three-Role Journey and Access Control
+left to right direction
+skinparam shadowing false
+skinparam roundcorner 14
+skinparam packageStyle rectangle
+
+actor Child
+actor Teacher
+actor Parent
+rectangle "Role password portal\n(local demo or authenticated account)" as Portal
+rectangle "Child Reading Space\nLibrary • Read-aloud canvas • Quiz • Celebration report" as ChildSpace
+rectangle "Teacher Dashboard\nClass manager • Learner plans • Review • Materials" as TeacherSpace
+rectangle "Family Reading Space\nProgress • Checklist • Reminder centre" as ParentSpace
+database "Reader Leader database" as DB
+cloud "Authorised recording storage" as Storage
+
+Child --> Portal : select Child role\nenter credentials
+Teacher --> Portal : select Teacher role\nenter credentials
+Parent --> Portal : select Parent role\nenter credentials
+Portal --> ChildSpace : child session
+Portal --> TeacherSpace : teacher session
+Portal --> ParentSpace : linked parent session
+ChildSpace --> DB : reading sessions\nquiz attempts
+ChildSpace --> Storage : authorised audio only
+TeacherSpace --> DB : classes, enrolments,\nsettings, materials, feedback
+ParentSpace --> DB : family-scoped progress,\nchecklist and reminders
+DB --> TeacherSpace : learner records\nand review signals
+DB --> ParentSpace : linked child summaries
+note bottom of DB
+Access is enforced by role and relationship:
+children access only their profile;
+teachers access enrolled learners;
+parents access linked family profiles.
+end note
+@enduml
+
+@startuml reader_leader_reading_sequence
+title Reader Leader — Live Reading Session and ASR-Supported Analysis
+autonumber
+actor Child
+participant "React reading canvas" as UI
+participant "Browser microphone\nand live speech preview" as BrowserASR
+participant "Reader Leader API" as API
+participant "Recording storage" as Storage
+participant "Whisper ASR service" as Whisper
+participant "Reading engine" as Engine
+database "Reader Leader database" as DB
+participant "Teacher dashboard" as Teacher
+
+Child -> UI : choose passage and mode
+Child -> UI : starts read-aloud
+UI -> BrowserASR : request microphone\npreview speech locally
+BrowserASR --> UI : interim transcript / word attempts
+UI -> UI : update current, correct, retry,\nor silent-review word state
+Child -> UI : finishes session
+UI -> API : upload authorised recording\n+ expected text + word states
+API -> Storage : save encrypted-key reference
+API -> Whisper : transcribe saved recording
+Whisper --> API : transcript + timed segments
+API -> Engine : compare expected/spoken words\nby assessment mode
+Engine --> API : story match, WCPM,\ninterventions and word timing metadata
+API -> DB : persist session and metrics
+API --> UI : encouraging report
+DB --> Teacher : authorised review, trend data,\nand word-linked playback metadata
+note over Whisper,Engine
+Whisper segment timings are distributed across tokens
+for approximate word-linked playback in this prototype.
+The ASR output supports review; it is not a diagnostic verdict.
+end note
+@enduml
+
+@startuml reader_leader_modes_state_machine
+title Reader Leader — Reading Modes and Word-State Machine
+hide empty description
+skinparam state {
+  BackgroundColor #FFFFFF
+  BorderColor #243B64
+  FontColor #172554
+}
+
+[*] --> SelectMode
+SelectMode --> Assisted : ASSISTED_PRACTICE
+SelectMode --> Guided : GUIDED_PRACTICE
+SelectMode --> Monthly : MONTHLY_ASSESSMENT
+
+state Assisted {
+  [*] --> unread
+  unread --> current : focus next word
+  current --> correct : first correct attempt\nblue word
+  current --> incorrect : mismatch\nred + underline
+  incorrect --> retried_correct : correct retry\nblue + green marker
+  incorrect --> incorrect : further retry\nattempts++
+  correct --> [*]
+  retried_correct --> [*]
+}
+
+state Guided {
+  [*] --> g_unread
+  g_unread --> g_current : focus next word
+  g_current --> g_correct : correct attempt
+  g_current --> g_incorrect : first mismatch\nattempts = 1
+  g_incorrect --> g_model : second mismatch\nautomatic model audio
+  g_model --> g_retried : third attempt correct
+  g_model --> g_incorrect : third attempt mismatch
+  g_correct --> [*]
+  g_retried --> [*]
+}
+
+state Monthly {
+  [*] --> m_unread
+  m_unread --> m_current : seamless advance
+  m_current --> m_correct : first-pass match\nno correction prompt
+  m_current --> m_silent_flag : first-pass mismatch\nlogged for teacher only
+  m_correct --> [*]
+  m_silent_flag --> [*]
+}
+
+Assisted --> SessionReport : completed
+Guided --> SessionReport : completed
+Monthly --> SessionReport : completed
+state SessionReport {
+  [*] --> Metrics
+  Metrics : Assisted/Guided: retries and self-corrections
+  Metrics : Monthly: first-pass story match and WCPM only
+}
+@enduml
+
+@startuml reader_leader_material_workflow
+title Reader Leader — Teacher Material and Exercise Workflow
+start
+:Teacher selects a PDF, DOCX, TXT file,\nor enters a child-appropriate passage;
+:Server extracts text and stores an authorised file reference;
+:Teacher saves material;
+:Navigate to /teacher/materials/:id/review;
+if (Generate or regenerate AI exercises?) then (yes)
+  :Create structured vocabulary, questions,\nand an activity draft;
+  :Validate safe, age-appropriate structure;
+endif
+:Teacher reviews vocabulary cards\nand radio-style multiple-choice options;
+if (Approve and assign?) then (yes)
+  :Mark exercises approved;
+  :Assign the material to all selected classes;
+  :Navigate to /teacher/assignments/confirmation;
+  :Show assigned classes/students and class share code;
+  :Child library synchronises assigned reading;
+else (not yet)
+  :Return to dashboard or refine the material;
+endif
+stop
+@enduml
+
+@startuml reader_leader_system_architecture
+title Reader Leader — Full-Stack Component Architecture
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Browser" {
+  [React 19 + TypeScript\nrole-aware dashboards] as React
+  [Tailwind/CSS\nresponsive child, teacher, parent UI] as CSS
+  [MediaRecorder +\nWeb Speech API preview] as BrowserAudio
+  [Recharts + CSV download] as Reporting
+  React - CSS
+  React - BrowserAudio
+  React - Reporting
+}
+
+package "Reader Leader service" {
+  [tRPC API\nrole and relationship guards] as TRPC
+  [Reading engine\nmode policy + WCPM + word states] as Engine
+  [Material extraction\nand exercise safeguards] as Materials
+  [PDF report service] as PDF
+  [Checklist + reminder service] as Reminders
+  TRPC - Engine
+  TRPC - Materials
+  TRPC - PDF
+  TRPC - Reminders
+}
+
+database "TiDB / MySQL\nusers, classes, enrolments, materials,\nsessions, trends, checklists, reminders" as DB
+cloud "Object storage\nrecordings and source documents" as Storage
+cloud "Whisper ASR\ntranscription + timed segments" as ASR
+cloud "Built-in LLM\nteacher-reviewed exercise draft" as LLM
+
+React --> TRPC : typed protected calls
+BrowserAudio --> TRPC : recording payload
+TRPC --> DB : persist authorised data
+TRPC --> Storage : file/audio references
+TRPC --> ASR : saved-recording transcription
+TRPC --> LLM : structured exercise generation
+@enduml
+
+@startuml reader_leader_class_export_reminder_flow
+title Reader Leader — Multi-Learner Management, CSV Reporting, and Reminder Centre
+actor Teacher
+actor Parent
+participant "Teacher dashboard" as TeacherUI
+participant "Parent dashboard" as ParentUI
+participant "Reader Leader API" as API
+database "Reader Leader database" as DB
+
+Teacher -> TeacherUI : create class or choose class
+TeacherUI -> API : create class / add learner
+API -> DB : store class, child profile,\nenrolment and default learner plan
+DB --> TeacherUI : roster with per-learner metrics
+Teacher -> TeacherUI : select class and Export CSV
+TeacherUI -> API : request authorised monthly trend export
+API -> DB : read monthly assessment sessions\nfor chosen class
+API --> TeacherUI : CSV: class, month,\nstory match, WCPM, session count
+TeacherUI --> Teacher : browser download
+
+Parent -> ParentUI : complete final home-practice step
+ParentUI -> API : save three-step checklist
+API -> DB : save daily checklist
+alt first completion for learner and day
+  API -> DB : create one unread in-app reminder
+else already completed today
+  API -> DB : retain existing reminder\n(no duplicate)
+end
+DB --> ParentUI : reminder-centre update
+Parent -> ParentUI : mark reminder read
+ParentUI -> API : update read state
+API -> DB : persist read timestamp
+@enduml
