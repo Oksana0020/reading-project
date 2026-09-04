@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, users } from "../drizzle/schema";
+import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, teacherTermPresets, users } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, getTeacherDashboard, listParentReminders, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist } from "./readerDb";
+import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, deleteTeacherTermPreset, getTeacherDashboard, listParentReminders, listTeacherTermPresets, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist, saveTeacherTermPreset } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
 const testKey = `rlt-${crypto.randomUUID()}`;
@@ -30,6 +30,7 @@ afterEach(async () => {
     await db.delete(homePracticeChecklists).where(eq(homePracticeChecklists.parentUserId, parentId));
     await db.delete(familyLinks).where(eq(familyLinks.parentUserId, parentId));
   }
+  for (const userId of createdUserIds) await db.delete(teacherTermPresets).where(eq(teacherTermPresets.teacherUserId, userId));
   for (const classId of createdClassIds) await db.delete(classEnrollments).where(eq(classEnrollments.classId, classId));
   for (const userId of createdUserIds) {
     await db.delete(learnerReadingSettings).where(eq(learnerReadingSettings.childProfileId, userId));
@@ -63,7 +64,9 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     const teacher = await insertUser(`${testKey}-bulk-teacher`, "Bulk Teacher", "teacher");
     const readerClass = await createAdditionalClassForTeacher(teacher.id, "Bulk Owls", `T${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`);
     createdClassIds.push(readerClass.id);
-    const result = await addLearnersToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, rows: [{ row: 2, displayName: "Alex Turner", bookBand: "Level 3 · Sky Blue" }, { row: 3, displayName: "Alex Turner", bookBand: "Level 4 · Gold" }, { row: 4, displayName: "Robin Shah", bookBand: "Level 4 · Gold" }], createFamilyCode: () => `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    const existing = await addLearnerToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, displayName: "Casey Doe", bookBand: "Level 3 · Sky Blue", familyCode: `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    createdUserIds.push(existing.profile.userId);
+    const result = await addLearnersToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, rows: [{ row: 2, displayName: "Alex Turner", bookBand: "Level 3 · Sky Blue" }, { row: 3, displayName: "Alex Turner", bookBand: "Level 4 · Gold" }, { row: 4, displayName: "Casey Doe", bookBand: "Level 3 · Sky Blue" }, { row: 5, displayName: "Robin Shah", bookBand: "Level 4 · Gold" }], createFamilyCode: () => `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
     const db = await getDb();
     if (!db) throw new Error("Database is unavailable for integration coverage.");
     for (const learner of result.created) {
@@ -71,8 +74,16 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
       if (profile) createdUserIds.push(profile.userId);
     }
     expect(result.created.map(item => item.displayName)).toEqual(["Alex Turner", "Robin Shah"]);
-    expect(result.errors).toEqual([{ row: 3, message: "This learner name appears more than once in the import." }]);
-    expect((await getTeacherDashboard(teacher.id)).classes.find(item => item.id === readerClass.id)?.pupilCount).toBe(2);
+    expect(result.errors).toEqual([{ row: 3, message: "This learner name appears more than once in the import." }, { row: 4, message: "This learner is already in the selected class roster." }]);
+    expect((await getTeacherDashboard(teacher.id)).classes.find(item => item.id === readerClass.id)?.pupilCount).toBe(3);
+  });
+
+  it("saves, lists, and removes a teacher-owned named term preset", async () => {
+    const teacher = await insertUser(`${testKey}-term-teacher`, "Term Teacher", "teacher");
+    const saved = await saveTeacherTermPreset(teacher.id, { name: "Autumn 2026", startDate: "2026-09-01", endDate: "2026-12-18" });
+    expect(await listTeacherTermPresets(teacher.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: saved.id, name: "Autumn 2026", startDate: "2026-09-01", endDate: "2026-12-18" })]));
+    expect(await deleteTeacherTermPreset(teacher.id, saved.id)).toEqual({ success: true });
+    expect(await listTeacherTermPresets(teacher.id)).toHaveLength(0);
   });
 
   it("creates one same-day parent reminder, records its read state, and does not duplicate it after re-completion", async () => {
@@ -98,5 +109,16 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     const repeatedCompletion = await saveHomePracticeChecklist(parent.id, profile.id, [true, true, true], new Date("2026-09-03T12:06:00.000Z"));
     expect(repeatedCompletion.reminderCreated).toBe(false);
     expect(await listParentReminders(parent.id)).toHaveLength(1);
+
+    const secondChild = await insertUser(`${testKey}-child-two`, "Second Test Child", "child");
+    await db.insert(childProfiles).values({ userId: secondChild.id, displayName: "Second Test Child", bookBand: "Level 4 · Gold", familyCode: `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    const [secondProfile] = await db.select().from(childProfiles).where(eq(childProfiles.userId, secondChild.id)).limit(1);
+    if (!secondProfile) throw new Error("Could not create second test learner profile.");
+    await db.insert(familyLinks).values({ parentUserId: parent.id, childProfileId: secondProfile.id });
+    await saveHomePracticeChecklist(parent.id, secondProfile.id, [true, true, true], new Date("2026-09-04T12:00:00.000Z"));
+    expect(await listParentReminders(parent.id, { childProfileId: secondProfile.id })).toEqual([expect.objectContaining({ childProfileId: secondProfile.id })]);
+    const notificationDate = new Date().toISOString().slice(0, 10);
+    expect(await listParentReminders(parent.id, { startDate: notificationDate, endDate: notificationDate })).toEqual(expect.arrayContaining([expect.objectContaining({ childProfileId: secondProfile.id })]));
+    expect(await listParentReminders(parent.id, { startDate: "2099-01-01", endDate: "2099-01-01" })).toEqual([]);
   });
 });

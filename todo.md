@@ -100,3 +100,12 @@
 - [x] Revalidate teacher import and term controls at mobile and tablet widths with an active class and applied date range.
 - [x] Revalidate parent unread badge and “mark all as read” controls at mobile and tablet widths before read state is changed.
 - [x] Prepare a complete copilot-ready inventory of the currently implemented Reader Leader functionality.
+- [x] Add configurable CSV column mapping for standard school MIS learner exports.
+- [x] Add teacher-owned saved named term presets for monthly assessment trend and CSV reporting ranges.
+- [x] Add parent reminder-history filters for linked child and date range.
+- [x] Apply the attached child Reading Library, Teacher Dashboard, and Parent Dashboard layout and role-isolation refinements.
+- [x] Add a concise API and procedure catalogue to the copilot functionality reference.
+- [x] Add a release-version history to the copilot functionality reference.
+- [x] Build an interactive teacher onboarding guide for effective bulk learner CSV import.
+- [x] Add automated coverage and responsive validation for new import mapping, term presets, reminder filters, onboarding, and UI refinements.
+- [x] Prevent mapped MIS imports from creating duplicate learner names already present in the selected class roster.

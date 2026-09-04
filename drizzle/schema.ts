@@ -26,6 +26,17 @@ export const readerClasses = mysqlTable("readerClasses", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+/** A reusable, teacher-owned assessment-reporting range. Dates are stored as ISO calendar days. */
+export const teacherTermPresets = mysqlTable("teacherTermPresets", {
+  id: int("id").autoincrement().primaryKey(),
+  teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 80 }).notNull(),
+  startDate: varchar("startDate", { length: 10 }).notNull(),
+  endDate: varchar("endDate", { length: 10 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [unique("teacher_term_preset_name_unique").on(table.teacherUserId, table.name)]);
+
 export const schoolBranding = mysqlTable("schoolBranding", {
   id: int("id").autoincrement().primaryKey(),
   teacherUserId: int("teacherUserId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),

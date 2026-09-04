@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import {
   AccountRole,
   childProfiles,
@@ -15,6 +15,7 @@ import {
   quizAttempts,
   schoolBranding,
   sessionComments,
+  teacherTermPresets,
   type ExerciseSet,
   type QuizAnswer,
   type StoredIntervention,
@@ -99,6 +100,30 @@ export async function createAdditionalClassForTeacher(teacherUserId: number, nam
   return readerClass;
 }
 
+export type TeacherTermPresetInput = { name: string; startDate: string; endDate: string };
+
+export async function listTeacherTermPresets(teacherUserId: number) {
+  const db = await requireDb();
+  return db.select().from(teacherTermPresets).where(eq(teacherTermPresets.teacherUserId, teacherUserId)).orderBy(desc(teacherTermPresets.updatedAt), desc(teacherTermPresets.id));
+}
+
+export async function saveTeacherTermPreset(teacherUserId: number, input: TeacherTermPresetInput) {
+  if (!isValidTrendDateRange({ startDate: input.startDate, endDate: input.endDate }) || input.startDate > input.endDate) {
+    throw new Error("Choose a valid start date and an end date on or after it.");
+  }
+  const db = await requireDb();
+  await db.insert(teacherTermPresets).values({ teacherUserId, ...input }).onDuplicateKeyUpdate({ set: { startDate: input.startDate, endDate: input.endDate, updatedAt: new Date() } });
+  const [preset] = await db.select().from(teacherTermPresets).where(and(eq(teacherTermPresets.teacherUserId, teacherUserId), eq(teacherTermPresets.name, input.name))).limit(1);
+  if (!preset) throw new Error("Could not save the term preset.");
+  return preset;
+}
+
+export async function deleteTeacherTermPreset(teacherUserId: number, presetId: number) {
+  const db = await requireDb();
+  await db.delete(teacherTermPresets).where(and(eq(teacherTermPresets.id, presetId), eq(teacherTermPresets.teacherUserId, teacherUserId)));
+  return { success: true } as const;
+}
+
 export async function addLearnerToTeacherClass(input: { teacherUserId: number; classId: number; displayName: string; bookBand: string; familyCode: string }) {
   const db = await requireDb();
   const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, input.classId), eq(readerClasses.teacherUserId, input.teacherUserId))).limit(1);
@@ -122,15 +147,21 @@ export async function addLearnersToTeacherClass(input: { teacherUserId: number; 
   const created: { row: number; childProfileId: number; displayName: string; bookBand: string }[] = [];
   const errors: { row: number; message: string }[] = [];
   const importedNames = new Set<string>();
+  const existingRoster = await db.select({ displayName: childProfiles.displayName }).from(classEnrollments)
+    .innerJoin(childProfiles, eq(classEnrollments.childProfileId, childProfiles.id))
+    .where(eq(classEnrollments.classId, readerClass.id));
+  const existingNames = new Set(existingRoster.map(item => item.displayName.trim().replace(/\s+/g, " ").toLocaleLowerCase()));
   for (const row of input.rows) {
     const displayName = row.displayName.trim().replace(/\s+/g, " ");
     const nameKey = displayName.toLocaleLowerCase();
     if (!displayName) { errors.push({ row: row.row, message: "A learner name is required." }); continue; }
     if (importedNames.has(nameKey)) { errors.push({ row: row.row, message: "This learner name appears more than once in the import." }); continue; }
+    if (existingNames.has(nameKey)) { errors.push({ row: row.row, message: "This learner is already in the selected class roster." }); continue; }
     importedNames.add(nameKey);
     try {
       const result = await addLearnerToTeacherClass({ teacherUserId: input.teacherUserId, classId: input.classId, displayName, bookBand: row.bookBand?.trim() || "Level 3 · Sky Blue", familyCode: input.createFamilyCode() });
       created.push({ row: row.row, childProfileId: result.profile.id, displayName: result.profile.displayName, bookBand: result.profile.bookBand });
+      existingNames.add(nameKey);
     } catch {
       errors.push({ row: row.row, message: "This learner could not be added. Please try the row again." });
     }
@@ -346,7 +377,8 @@ export async function getChildProgress(childProfileId: number) {
 export async function getTeacherDashboard(teacherUserId: number) {
   const db = await requireDb();
   const classes = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
-  if (!classes.length) return { classes: [], pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  const termPresets = await listTeacherTermPresets(teacherUserId);
+  if (!classes.length) return { classes: [], pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
   const classIds = classes.map(readerClass => readerClass.id);
   const enrolled = await db.select({ childProfileId: classEnrollments.childProfileId, classId: classEnrollments.classId, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(classEnrollments).innerJoin(childProfiles, eq(classEnrollments.childProfileId, childProfiles.id)).where(inArray(classEnrollments.classId, classIds));
@@ -370,7 +402,7 @@ export async function getTeacherDashboard(teacherUserId: number) {
   const materials = await listTeacherMaterials(teacherUserId);
   const comments = await getSessionComments(sessions.map(session => session.id));
   const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
-  return { classes: classSummaries, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  return { classes: classSummaries, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
 export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number, range?: TrendDateRange) {
@@ -415,10 +447,23 @@ export async function saveHomePracticeChecklist(parentUserId: number, childProfi
   return { checklist, reminderCreated };
 }
 
-export async function listParentReminders(parentUserId: number) {
+export type ParentReminderFilter = { childProfileId?: number; startDate?: string; endDate?: string };
+
+export async function listParentReminders(parentUserId: number, filter?: ParentReminderFilter) {
+  if (!isValidTrendDateRange(filter)) throw new Error("Choose an end date on or after the start date.");
   const db = await requireDb();
+  const clauses = [eq(parentReminders.parentUserId, parentUserId)];
+  if (filter?.childProfileId) clauses.push(eq(parentReminders.childProfileId, filter.childProfileId));
+  if (filter?.startDate) clauses.push(gte(parentReminders.createdAt, new Date(`${filter.startDate}T00:00:00.000Z`)));
+  if (filter?.endDate) clauses.push(lte(parentReminders.createdAt, new Date(`${filter.endDate}T23:59:59.999Z`)));
   return db.select({ id: parentReminders.id, childProfileId: parentReminders.childProfileId, childName: childProfiles.displayName, title: parentReminders.title, message: parentReminders.message, status: parentReminders.status, createdAt: parentReminders.createdAt, readAt: parentReminders.readAt })
-    .from(parentReminders).innerJoin(childProfiles, eq(parentReminders.childProfileId, childProfiles.id)).where(eq(parentReminders.parentUserId, parentUserId)).orderBy(desc(parentReminders.createdAt)).limit(12);
+    .from(parentReminders).innerJoin(childProfiles, eq(parentReminders.childProfileId, childProfiles.id)).where(and(...clauses)).orderBy(desc(parentReminders.createdAt)).limit(48);
+}
+
+export async function getParentUnreadReminderCount(parentUserId: number) {
+  const db = await requireDb();
+  const [result] = await db.select({ total: count() }).from(parentReminders).where(and(eq(parentReminders.parentUserId, parentUserId), eq(parentReminders.status, "unread")));
+  return Number(result?.total ?? 0);
 }
 
 export async function markParentReminderRead(parentUserId: number, reminderId: number) {
@@ -439,7 +484,7 @@ export async function getParentDashboard(parentUserId: number) {
     .from(familyLinks).innerJoin(childProfiles, eq(familyLinks.childProfileId, childProfiles.id)).where(eq(familyLinks.parentUserId, parentUserId));
   const progress = await Promise.all(children.map(async child => ({ ...child, ...(await getChildProgress(child.childProfileId)), practiceChecklist: await getHomePracticeChecklist(parentUserId, child.childProfileId) })));
   const reminders = await listParentReminders(parentUserId);
-  return { children: progress, reminders, unreadReminderCount: reminders.filter(reminder => reminder.status === "unread").length };
+  return { children: progress, reminders, unreadReminderCount: await getParentUnreadReminderCount(parentUserId) };
 }
 
 /** Creates a clearly labelled cohort only when an administrator requests it from the dashboard. */

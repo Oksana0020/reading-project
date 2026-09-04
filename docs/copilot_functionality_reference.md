@@ -1,5 +1,7 @@
 # Reader Leader: Current Functionality Reference for Copilot
 
+> **Reference version:** `1.6.0` · **Status:** current working release · **Updated:** 2026-09-04
+
 This document is the **current functional inventory** of Reader Leader. It is intended to help a copilot, engineer, product owner, or reviewer understand what is implemented, which role may use each capability, and the key boundaries that must be preserved when extending the system.
 
 > **Product purpose:** Reader Leader is an AI-supported read-aloud fluency coaching MVP for children aged 8–10. It supports a child, their teacher, and their parent or guardian through separate, privacy-aware experiences.
@@ -59,8 +61,10 @@ The teacher dashboard is a role-scoped workspace for reviewing learners, classes
 | Join/share code | Shows the selected class code for matching a child’s profile to the teacher’s class. |
 | Create one learner | Adds a learner with name and book band, creates a private family connection code, and provides a default reading plan. |
 | Bulk learner CSV import | Imports up to **100** learners into the currently selected class. |
-| CSV validation | Requires a `display_name` column and accepts an optional `book_band` column. Empty/invalid rows are reported, duplicate names in the file are reported by row, and duplicate learners are not created. |
+| MIS column mapping | Teachers can upload a standard school MIS CSV, inspect its headings, map a learner-name column, and optionally map a reading-level/book-band column before import. Common headings such as `Student Name`, `Pupil Name`, `Full Name`, `Reading Level`, and `Year Group` are suggested automatically. |
+| CSV validation | Empty/invalid rows are reported, duplicate names in the file are reported by row, and duplicate learners are not created. Valid rows are retained even when other rows need attention. |
 | CSV template | Teachers can download a ready-to-fill template with the supported columns. |
+| Interactive onboarding | A three-step in-dashboard guide explains selecting a class, checking/mapping headings, and reviewing the resulting import feedback. |
 | No-session learners | Learners with no saved sessions display a clean dash for story match and WCPM. They do not reduce class averages. |
 
 ### Learner reading plans
@@ -88,6 +92,7 @@ Teachers can view monthly assessment **Story Match %** and **WCPM** together on 
 | Date range | Teachers choose an inclusive **From** and **To** date for a custom term or assessment window. |
 | Apply range | Refreshes the trend chart to the selected interval. |
 | All time | Clears the custom interval and restores all available monthly assessment data. |
+| Saved named terms | Teachers can save a name and inclusive date range, such as **Autumn 2026**, and reuse it with one selection. Saved terms are private to their teacher account and can be removed when no longer useful. |
 | Trend labels | Uses the filtered months represented by the assessment data. |
 | Export CSV | Produces an authorised CSV matching the currently selected class/all-class scope and date range. |
 | CSV columns | `Class`, `Month`, `Story Match %`, `WCPM`, and `Assessment Sessions`. |
@@ -127,6 +132,7 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 | Individual read state | A parent can mark a single reminder as read. |
 | Bulk action | A parent can use **Mark all read** to update all of their unread reminders at once. |
 | History | Read reminders remain visible as a family completion history. |
+| History filters | Parents can filter reminder history by a specific linked child and an inclusive From/To date range. The unread badge remains an all-family notification count rather than a filtered count. |
 
 ## 5. Reports and downloads
 
@@ -137,6 +143,7 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 | Teacher running-record PDF | Teacher | Learners/classes they are authorised to review. |
 | Monthly assessment trends CSV | Teacher | Selected class or all-class view, with the active term range if one is applied. |
 | Learner import CSV template | Teacher | Column template for teacher class roster import. |
+| MIS roster import | Teacher | A selected-class import with header inspection, configurable column mapping, row-level validation, and a 100-learner cap. |
 
 ## 6. Role and data-access rules
 
@@ -154,7 +161,7 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 4. Treat transcription-derived word timings as approximate for real recordings and avoid diagnostic claims about child speech.
 5. Keep Monthly Assessment quiet: no live correction colour, retry prompt, or read-again correction action.
 6. Preserve the daily checklist/reminder uniqueness rule: one checklist per parent/child/date and one reminder per completed checklist.
-7. Keep class CSV imports validated, class-scoped, bounded to 100 rows, and transparent about unsuccessful rows.
+7. Keep class CSV imports validated, class-scoped, bounded to 100 rows, transparent about unsuccessful rows, and require an explicit learner-name column mapping when importing non-template MIS exports.
 8. Keep trend chart data and CSV export data aligned by using the same date-bounded monthly aggregation.
 9. Use UTC-based timestamps internally and localise only for display.
 10. Do not fabricate reviews, ratings, testimonials, or learner outcomes.
@@ -167,6 +174,51 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 | `/teacher/materials/:id/review` | Focused teacher material confirmation/review and exercise-generation workflow. |
 | `/teacher/assignments/confirmation` | Assignment completion screen with assigned class details, share code, and Library action. |
 
-## 9. Current validation status
+## 9. API and procedure catalogue
 
-The current build has passed TypeScript checking and **40 automated tests across 14 test files**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, CSV parsing, term filtering, protected data access, class roster creation, bulk import behaviour, checklist/reminder persistence, read-state changes, and duplicate protection. Authenticated browser validation has covered the role portal, child reading flows, teacher class/import/trend controls, CSV download, parent reminder badge and mark-all controls, and responsive mobile/tablet layouts.
+The system uses typed tRPC procedures under `readerLeader`. The client should consume them through `trpc.readerLeader.*`; direct client-side REST calls and browser-managed credentials are not used. All mutations retain server-side role and ownership checks.
+
+| Procedure group | Key procedures | Intended role and purpose |
+| --- | --- | --- |
+| `account` | `me`, `setupChild`, `setupTeacher`, `linkParent`, `joinClass` | Establishes role-scoped accounts and safely connects child, class, and family records. |
+| `materials` | `extractUpload`, `listMine`, `review`, `create`, `generateExercises`, `approve`, `assignedForMe` | Lets teachers manage reading materials and reviewed exercises, while children retrieve assigned passages. |
+| `sessions` | `processAndSave`, `save`, `childProgress`, `audioUrl`, `comments`, `addComment` | Stores/read-outs reading sessions, runs ASR-supported analysis, returns authorised audio URLs, and supports teacher feedback. |
+| `learners` | `settings`, `saveSettings` | Reads or saves one learner’s teacher-configured default mode and target WCPM. |
+| `classes` | `create`, `addLearner`, `importLearners` | Manages teacher-owned classes and securely adds one or many learner records to the selected class. |
+| `termPresets` | `list`, `save`, `remove` | Persists teacher-owned named reporting windows with validated inclusive dates. |
+| `reports` | `monthlyTrend`, `monthlyTrendCsv`, `download`, `downloadPdf` | Produces teacher trend data/CSV exports and audience-specific reading reports with ownership checks. |
+| `homePractice` | `saveChecklist`, `reminders`, `markReminderRead`, `markAllRemindersRead` | Saves a parent’s daily checklist, returns linked-child/date-filtered history, and updates reminder read states. |
+| `quizzes` | `forAssignedMaterial`, `submit`, `history` | Provides child-only comprehension quizzes, submitted answers, feedback, and retry history. |
+| `branding` | `mine`, `save` | Manages teacher-owned PDF branding settings. |
+| `dashboards` | `teacher`, `parent` | Returns the role-scoped dashboard aggregation used by active role surfaces. |
+| `demo` | `seedCohort` | Administrator-only demo-data provisioning for the guided product walkthrough. |
+
+> **Implementation guidance:** Before adding a procedure, update the schema and migration when persistence is required, put ownership-aware data work in `server/readerDb.ts`, expose a typed protected procedure in `server/routers/readerLeader.ts`, then consume it with the existing tRPC client. Add deterministic Vitest coverage before delivery.
+
+## 10. Interactive teacher onboarding: MIS roster import
+
+The Teacher Dashboard includes an interactive three-step onboarding guide directly beside the import workflow. The first step reminds the teacher to select the target class, which prevents ambiguous roster placement. The second downloads the template when helpful and explains the heading-mapping step for a school MIS export. The third explains that valid rows import while duplicates or incomplete records are returned as row-level feedback.
+
+| Step | Teacher action | System safeguard |
+| --- | --- | --- |
+| 1. Choose the class | Select the named roster in **Class manager**. | The import action remains unavailable until a class is selected. |
+| 2. Check the headings | Upload the CSV and select the matching learner-name and optional level columns. | The preview detects common school MIS headings and blocks an unmapped or missing learner-name field. |
+| 3. Import and review | Choose **Import mapped learners** and inspect the confirmation panel. | The system caps the file at 100 learner rows and reports individual row issues without concealing successful imports. |
+
+## 11. Reference version history
+
+| Reference version | Release checkpoint | Scope added or materially changed |
+| --- | --- | --- |
+| `1.0.0` | `54264746` | Original child reading MVP, supportive reports, and early role-aware interface. |
+| `1.1.0` | `a8278cf0` | Persisted role links, class/material/exercise workflows, and dynamic dashboards. |
+| `1.2.0` | `59ecc25e` | Guided, Assisted, and Monthly Assessment reading modes with word-state persistence. |
+| `1.3.0` | `a0e28bfc` | Trend charts, word-linked saved audio playback, learner plans, routed teacher workflows, and parent checklist refinements. |
+| `1.4.0` | `b40cab59` | Multi-learner class management, class trend CSV export, and persistent parent reminders. |
+| `1.5.0` | `817a196c` | Bulk CSV learner import, custom term date filters, unread badges, and mark-all reminder handling. |
+| `1.6.0` | Pending checkpoint | MIS column mapping, saved named term presets, child/date reminder history filters, interface refinement, and the interactive import onboarding guide. |
+
+When a release materially changes functionality, increment the reference version, add a row to this table, update the procedure catalogue if API contracts changed, and revise the validation status below with the new test count and browser checks.
+
+## 12. Current validation status
+
+The current build has passed TypeScript checking and **41 automated tests across 14 test files**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, and read-state changes. Authenticated browser validation has covered the role portal, child reading flows, teacher MIS mapping/import/onboarding/term-preset controls, CSV download, parent reminder filters, badge and mark-all controls, and responsive mobile/tablet layouts.

@@ -27,6 +27,8 @@ import {
   getTeacherMaterialReview,
   getTeacherDashboard,
   getTeacherMonthlyTrendExport,
+  listParentReminders,
+  listTeacherTermPresets,
   isTeacher,
   linkParentToFamily,
   listAssignedMaterialsForChild,
@@ -46,6 +48,8 @@ import {
   saveHomePracticeChecklist,
   markParentReminderRead,
   markAllParentRemindersRead,
+  saveTeacherTermPreset,
+  deleteTeacherTermPreset,
   setUserRole,
 } from "../readerDb";
 import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
@@ -57,6 +61,7 @@ const teacherRole = z.literal("teacher");
 const parentRole = z.literal("parent");
 const assessmentModeSchema = z.enum(["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"]);
 const trendDateRangeSchema = z.object({ startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional();
+const termPresetSchema = z.object({ name: z.string().trim().min(2).max(80), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
 const wordStateSchema = z.object({ id: z.string().regex(/^word-\d+$/), text: z.string().min(1).max(80), status: z.enum(["unread", "current", "correct", "incorrect", "retried_correct"]), attempts: z.number().int().min(0).max(12) });
 const exerciseSetSchema = z.object({
   vocabulary: z.array(z.object({ word: z.string().min(1).max(50), childFriendlyMeaning: z.string().min(1).max(200) })).min(3).max(6),
@@ -295,6 +300,20 @@ export const readerLeaderRouter = router({
       return addLearnersToTeacherClass({ teacherUserId: ctx.user.id, classId: input.classId, rows: input.rows, createFamilyCode: () => code("FAM") });
     }),
   }),
+  termPresets: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      requireTeacher(ctx.user.role);
+      return listTeacherTermPresets(ctx.user.id);
+    }),
+    save: protectedProcedure.input(termPresetSchema).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return saveTeacherTermPreset(ctx.user.id, input);
+    }),
+    remove: protectedProcedure.input(z.object({ presetId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return deleteTeacherTermPreset(ctx.user.id, input.presetId);
+    }),
+  }),
   homePractice: router({
     saveChecklist: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), completedSteps: z.array(z.boolean()).max(3) })).mutation(async ({ ctx, input }) => {
       if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "Home-practice checklists are available to linked parent accounts." });
@@ -310,6 +329,13 @@ export const readerLeaderRouter = router({
     markAllRemindersRead: protectedProcedure.mutation(async ({ ctx }) => {
       if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "This reminder centre is available to parent accounts." });
       return markAllParentRemindersRead(ctx.user.id);
+    }),
+    reminders: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive().optional(), range: trendDateRangeSchema })).query(async ({ ctx, input }) => {
+      if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "This reminder centre is available to parent accounts." });
+      if (input.childProfileId && !(await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not linked to your family account." });
+      }
+      return listParentReminders(ctx.user.id, { childProfileId: input.childProfileId, ...input.range });
     }),
   }),
   quizzes: router({
