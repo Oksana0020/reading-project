@@ -25,7 +25,7 @@ import {
 } from "../drizzle/schema";
 import { getDb } from "./db";
 import { storagePut } from "./storage";
-import { buildMonthlyAssessmentTrend, minutesReadThisWeek } from "./learningAnalytics";
+import { buildMonthlyAssessmentTrend, isValidTrendDateRange, minutesReadThisWeek, type TrendDateRange } from "./learningAnalytics";
 import { createDemoPlaybackTone } from "./demoPlaybackFixture";
 import { isPracticeChecklistComplete, normalisePracticeSteps, practiceChecklistDate } from "./homePractice";
 
@@ -113,6 +113,29 @@ export async function addLearnerToTeacherClass(input: { teacherUserId: number; c
   await db.insert(classEnrollments).values({ classId: readerClass.id, childProfileId: profile.id });
   await db.insert(learnerReadingSettings).values(defaultLearnerSettings(profile.id)).onDuplicateKeyUpdate({ set: { childProfileId: profile.id } });
   return { readerClass, profile };
+}
+
+export async function addLearnersToTeacherClass(input: { teacherUserId: number; classId: number; rows: { row: number; displayName: string; bookBand?: string }[]; createFamilyCode: () => string }) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, input.classId), eq(readerClasses.teacherUserId, input.teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  const created: { row: number; childProfileId: number; displayName: string; bookBand: string }[] = [];
+  const errors: { row: number; message: string }[] = [];
+  const importedNames = new Set<string>();
+  for (const row of input.rows) {
+    const displayName = row.displayName.trim().replace(/\s+/g, " ");
+    const nameKey = displayName.toLocaleLowerCase();
+    if (!displayName) { errors.push({ row: row.row, message: "A learner name is required." }); continue; }
+    if (importedNames.has(nameKey)) { errors.push({ row: row.row, message: "This learner name appears more than once in the import." }); continue; }
+    importedNames.add(nameKey);
+    try {
+      const result = await addLearnerToTeacherClass({ teacherUserId: input.teacherUserId, classId: input.classId, displayName, bookBand: row.bookBand?.trim() || "Level 3 · Sky Blue", familyCode: input.createFamilyCode() });
+      created.push({ row: row.row, childProfileId: result.profile.id, displayName: result.profile.displayName, bookBand: result.profile.bookBand });
+    } catch {
+      errors.push({ row: row.row, message: "This learner could not be added. Please try the row again." });
+    }
+  }
+  return { readerClass, created, errors };
 }
 
 export async function linkParentToFamily(parentUserId: number, familyCode: string) {
@@ -350,11 +373,17 @@ export async function getTeacherDashboard(teacherUserId: number) {
   return { classes: classSummaries, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
-export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number) {
-  const dashboard = await getTeacherDashboard(teacherUserId);
-  const selectedClass = classId ? dashboard.classes.find(readerClass => readerClass.id === classId) : undefined;
+export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number, range?: TrendDateRange) {
+  if (!isValidTrendDateRange(range)) throw new Error("Choose an end date that is on or after the start date.");
+  const db = await requireDb();
+  const classes = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
+  const selectedClass = classId ? classes.find(readerClass => readerClass.id === classId) : undefined;
   if (classId && !selectedClass) throw new Error("This class is not available to your account.");
-  return { className: selectedClass?.name ?? "All teacher classes", points: selectedClass?.assessmentTrend ?? dashboard.classAssessmentTrend };
+  const classIds = selectedClass ? [selectedClass.id] : classes.map(readerClass => readerClass.id);
+  const enrolled = classIds.length ? await db.select({ childProfileId: classEnrollments.childProfileId }).from(classEnrollments).where(inArray(classEnrollments.classId, classIds)) : [];
+  const profileIds = enrolled.map(row => row.childProfileId);
+  const sessions = profileIds.length ? await db.select().from(readingSessions).where(inArray(readingSessions.childProfileId, profileIds)) : [];
+  return { className: selectedClass?.name ?? "All teacher classes", points: buildMonthlyAssessmentTrend(sessions, range) };
 }
 
 export async function getHomePracticeChecklist(parentUserId: number, childProfileId: number, now = new Date()) {
@@ -397,12 +426,20 @@ export async function markParentReminderRead(parentUserId: number, reminderId: n
   await db.update(parentReminders).set({ status: "read", readAt: new Date() }).where(and(eq(parentReminders.id, reminderId), eq(parentReminders.parentUserId, parentUserId)));
 }
 
+export async function markAllParentRemindersRead(parentUserId: number) {
+  const db = await requireDb();
+  const unread = await db.select({ id: parentReminders.id }).from(parentReminders).where(and(eq(parentReminders.parentUserId, parentUserId), eq(parentReminders.status, "unread")));
+  if (unread.length) await db.update(parentReminders).set({ status: "read", readAt: new Date() }).where(and(eq(parentReminders.parentUserId, parentUserId), eq(parentReminders.status, "unread")));
+  return { markedRead: unread.length };
+}
+
 export async function getParentDashboard(parentUserId: number) {
   const db = await requireDb();
   const children = await db.select({ childProfileId: childProfiles.id, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(familyLinks).innerJoin(childProfiles, eq(familyLinks.childProfileId, childProfiles.id)).where(eq(familyLinks.parentUserId, parentUserId));
   const progress = await Promise.all(children.map(async child => ({ ...child, ...(await getChildProgress(child.childProfileId)), practiceChecklist: await getHomePracticeChecklist(parentUserId, child.childProfileId) })));
-  return { children: progress, reminders: await listParentReminders(parentUserId) };
+  const reminders = await listParentReminders(parentUserId);
+  return { children: progress, reminders, unreadReminderCount: reminders.filter(reminder => reminder.status === "unread").length };
 }
 
 /** Creates a clearly labelled cohort only when an administrator requests it from the dashboard. */

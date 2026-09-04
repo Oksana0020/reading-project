@@ -1,4 +1,4 @@
-import type { MonthlyTrendPoint } from "./learningAnalytics";
+import type { MonthlyTrendPoint, TrendDateRange } from "./learningAnalytics";
 
 function csvCell(value: string | number) {
   return `"${String(value).replaceAll('"', '""')}"`;
@@ -10,7 +10,8 @@ export function createMonthlyTrendCsv(className: string, points: MonthlyTrendPoi
   return `${rows.map(row => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }
 
-export function monthlyTrendFilename(className: string) {
+export function monthlyTrendFilename(className: string, range?: TrendDateRange) {
   const safeName = className.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "class";
-  return `${safeName}-monthly-assessment-trends.csv`;
+  const rangeSuffix = range?.startDate || range?.endDate ? `-${range.startDate ?? "earliest"}-to-${range.endDate ?? "latest"}` : "";
+  return `${safeName}-monthly-assessment-trends${rangeSuffix}.csv`;
 }

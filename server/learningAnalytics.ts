@@ -14,12 +14,30 @@ export type MonthlyTrendPoint = {
   sessions: number;
 };
 
+export type TrendDateRange = { startDate?: string; endDate?: string };
+
 const monthLabel = (month: string) => new Intl.DateTimeFormat("en", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00.000Z`));
 
-export function buildMonthlyAssessmentTrend(sessions: AssessmentMetric[]): MonthlyTrendPoint[] {
+function asUtcStart(date: string) {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
+export function isValidTrendDateRange(range?: TrendDateRange) {
+  if (!range?.startDate && !range?.endDate) return true;
+  if (range?.startDate && !/^\d{4}-\d{2}-\d{2}$/.test(range.startDate)) return false;
+  if (range?.endDate && !/^\d{4}-\d{2}-\d{2}$/.test(range.endDate)) return false;
+  return !range?.startDate || !range?.endDate || asUtcStart(range.startDate).getTime() <= asUtcStart(range.endDate).getTime();
+}
+
+export function buildMonthlyAssessmentTrend(sessions: AssessmentMetric[], range?: TrendDateRange): MonthlyTrendPoint[] {
+  if (!isValidTrendDateRange(range)) throw new Error("Choose an end date that is on or after the start date.");
+  const start = range?.startDate ? asUtcStart(range.startDate) : undefined;
+  const endExclusive = range?.endDate ? new Date(asUtcStart(range.endDate).getTime() + 24 * 60 * 60 * 1000) : undefined;
   const grouped = new Map<string, AssessmentMetric[]>();
   for (const session of sessions) {
     if (session.assessmentMode !== "MONTHLY_ASSESSMENT") continue;
+    if (start && session.createdAt < start) continue;
+    if (endExclusive && session.createdAt >= endExclusive) continue;
     const month = session.createdAt.toISOString().slice(0, 7);
     grouped.set(month, [...(grouped.get(month) ?? []), session]);
   }

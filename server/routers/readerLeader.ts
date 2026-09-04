@@ -11,6 +11,7 @@ import { createBrandedPdfReport } from "../pdfReports";
 import {
   approveExercises,
   addLearnerToTeacherClass,
+  addLearnersToTeacherClass,
   createAdditionalClassForTeacher,
   createChildProfile,
   createClassForTeacher,
@@ -44,6 +45,7 @@ import {
   saveLearnerReadingSettings,
   saveHomePracticeChecklist,
   markParentReminderRead,
+  markAllParentRemindersRead,
   setUserRole,
 } from "../readerDb";
 import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
@@ -54,6 +56,7 @@ const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
 const parentRole = z.literal("parent");
 const assessmentModeSchema = z.enum(["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"]);
+const trendDateRangeSchema = z.object({ startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional();
 const wordStateSchema = z.object({ id: z.string().regex(/^word-\d+$/), text: z.string().min(1).max(80), status: z.enum(["unread", "current", "correct", "incorrect", "retried_correct"]), attempts: z.number().int().min(0).max(12) });
 const exerciseSetSchema = z.object({
   vocabulary: z.array(z.object({ word: z.string().min(1).max(50), childFriendlyMeaning: z.string().min(1).max(200) })).min(3).max(6),
@@ -287,6 +290,10 @@ export const readerLeaderRouter = router({
       requireTeacher(ctx.user.role);
       return addLearnerToTeacherClass({ teacherUserId: ctx.user.id, ...input, familyCode: code("FAM") });
     }),
+    importLearners: protectedProcedure.input(z.object({ classId: z.number().int().positive(), rows: z.array(z.object({ row: z.number().int().min(2).max(101), displayName: z.string().trim().min(1).max(80), bookBand: z.string().trim().min(2).max(80).optional() })).min(1).max(100) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return addLearnersToTeacherClass({ teacherUserId: ctx.user.id, classId: input.classId, rows: input.rows, createFamilyCode: () => code("FAM") });
+    }),
   }),
   homePractice: router({
     saveChecklist: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), completedSteps: z.array(z.boolean()).max(3) })).mutation(async ({ ctx, input }) => {
@@ -299,6 +306,10 @@ export const readerLeaderRouter = router({
       if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "This reminder centre is available to parent accounts." });
       await markParentReminderRead(ctx.user.id, input.reminderId);
       return { success: true } as const;
+    }),
+    markAllRemindersRead: protectedProcedure.mutation(async ({ ctx }) => {
+      if (ctx.user.role !== "parent") throw new TRPCError({ code: "FORBIDDEN", message: "This reminder centre is available to parent accounts." });
+      return markAllParentRemindersRead(ctx.user.id);
     }),
   }),
   quizzes: router({
@@ -329,10 +340,14 @@ export const readerLeaderRouter = router({
     }),
   }),
   reports: router({
-    monthlyTrendCsv: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional() })).query(async ({ ctx, input }) => {
+    monthlyTrend: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional(), range: trendDateRangeSchema })).query(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
-      const trend = await getTeacherMonthlyTrendExport(ctx.user.id, input.classId);
-      return { filename: monthlyTrendFilename(trend.className), csv: createMonthlyTrendCsv(trend.className, trend.points) };
+      return getTeacherMonthlyTrendExport(ctx.user.id, input.classId, input.range);
+    }),
+    monthlyTrendCsv: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional(), range: trendDateRangeSchema })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const trend = await getTeacherMonthlyTrendExport(ctx.user.id, input.classId, input.range);
+      return { filename: monthlyTrendFilename(trend.className, input.range), csv: createMonthlyTrendCsv(trend.className, trend.points) };
     }),
     download: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);

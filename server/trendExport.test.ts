@@ -10,4 +10,8 @@ describe("monthly trend CSV export", () => {
   it("makes a portable, readable report filename", () => {
     expect(monthlyTrendFilename("Ms Kelly's Reading Class")).toBe("ms-kelly-s-reading-class-monthly-assessment-trends.csv");
   });
+
+  it("adds a selected term range to the export filename", () => {
+    expect(monthlyTrendFilename("Ms Kelly's Reading Class", { startDate: "2026-09-01", endDate: "2026-12-18" })).toBe("ms-kelly-s-reading-class-monthly-assessment-trends-2026-09-01-to-2026-12-18.csv");
+  });
 });

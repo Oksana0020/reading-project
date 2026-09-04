@@ -91,3 +91,11 @@
 - [x] Keep multi-learner class averages and table metrics meaningful when a newly added learner has not yet completed a reading session. (Averages exclude no-session learners and their class-table cells show a clear dash.)
 - [x] Add automated coverage for teacher class creation, learner enrolment, and class roster/dashboard aggregation. (The database integration suite creates an authorised teacher class and learner, then verifies its class and pupil dashboard shapes.)
 - [x] Add database-level automated coverage for one reminder per learner/day, reminder read state, and same-day re-completion deduplication. (The integration suite verifies creation, read transition, and duplicate-safe re-completion against the configured database.)
+- [x] Add teacher CSV bulk learner import with file validation, row feedback, and class-scoped secure enrolment.
+- [x] Add term/date filters to teacher monthly assessment trend charts and CSV reporting.
+- [x] Add parent unread reminder badges and a privacy-scoped “mark all as read” action.
+- [x] Add automated coverage and responsive browser validation for bulk import, term filtering, and enhanced reminder handling.
+- [x] Validate the teacher bulk learner import panel and term-report filter bar at mobile and tablet widths.
+- [x] Validate the parent unread reminder badge and “mark all as read” controls at mobile and tablet widths.
+- [x] Revalidate teacher import and term controls at mobile and tablet widths with an active class and applied date range.
+- [x] Revalidate parent unread badge and “mark all as read” controls at mobile and tablet widths before read state is changed.

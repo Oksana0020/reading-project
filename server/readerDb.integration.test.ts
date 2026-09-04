@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, users } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, createAdditionalClassForTeacher, getTeacherDashboard, listParentReminders, markParentReminderRead, saveHomePracticeChecklist } from "./readerDb";
+import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, getTeacherDashboard, listParentReminders, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
-const testKey = `reader-leader-test-${crypto.randomUUID()}`;
+const testKey = `rlt-${crypto.randomUUID()}`;
 const createdUserIds: number[] = [];
 const createdClassIds: number[] = [];
 const createdParentIds: number[] = [];
@@ -59,6 +59,22 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     expect(dashboard.pupils).toEqual(expect.arrayContaining([expect.objectContaining({ childProfileId: learner.profile.id, classId: readerClass.id, displayName: "Test Learner", bookBand: "Level 4 · Gold" })]));
   });
 
+  it("adds a valid bulk roster while returning duplicate-row feedback", async () => {
+    const teacher = await insertUser(`${testKey}-bulk-teacher`, "Bulk Teacher", "teacher");
+    const readerClass = await createAdditionalClassForTeacher(teacher.id, "Bulk Owls", `T${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`);
+    createdClassIds.push(readerClass.id);
+    const result = await addLearnersToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, rows: [{ row: 2, displayName: "Alex Turner", bookBand: "Level 3 · Sky Blue" }, { row: 3, displayName: "Alex Turner", bookBand: "Level 4 · Gold" }, { row: 4, displayName: "Robin Shah", bookBand: "Level 4 · Gold" }], createFamilyCode: () => `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    const db = await getDb();
+    if (!db) throw new Error("Database is unavailable for integration coverage.");
+    for (const learner of result.created) {
+      const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.id, learner.childProfileId)).limit(1);
+      if (profile) createdUserIds.push(profile.userId);
+    }
+    expect(result.created.map(item => item.displayName)).toEqual(["Alex Turner", "Robin Shah"]);
+    expect(result.errors).toEqual([{ row: 3, message: "This learner name appears more than once in the import." }]);
+    expect((await getTeacherDashboard(teacher.id)).classes.find(item => item.id === readerClass.id)?.pupilCount).toBe(2);
+  });
+
   it("creates one same-day parent reminder, records its read state, and does not duplicate it after re-completion", async () => {
     const parent = await insertUser(`${testKey}-parent`, "Test Parent", "parent");
     const child = await insertUser(`${testKey}-child`, "Test Child", "child");
@@ -74,6 +90,8 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     const [firstReminder] = await listParentReminders(parent.id);
     expect(firstReminder).toMatchObject({ childProfileId: profile.id, status: "unread", title: "Home practice complete" });
 
+    expect(await markAllParentRemindersRead(parent.id)).toEqual({ markedRead: 1 });
+    expect((await listParentReminders(parent.id))[0]?.status).toBe("read");
     await markParentReminderRead(parent.id, firstReminder.id);
     expect((await listParentReminders(parent.id))[0]?.status).toBe("read");
     await saveHomePracticeChecklist(parent.id, profile.id, [true, true, false], new Date("2026-09-03T12:05:00.000Z"));
