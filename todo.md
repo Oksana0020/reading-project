@@ -99,3 +99,4 @@
 - [x] Validate the parent unread reminder badge and “mark all as read” controls at mobile and tablet widths.
 - [x] Revalidate teacher import and term controls at mobile and tablet widths with an active class and applied date range.
 - [x] Revalidate parent unread badge and “mark all as read” controls at mobile and tablet widths before read state is changed.
+- [x] Prepare a complete copilot-ready inventory of the currently implemented Reader Leader functionality.
