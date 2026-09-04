@@ -4,6 +4,8 @@ export const accountRoleValues = ["user", "admin", "child", "teacher", "parent"]
 export type AccountRole = (typeof accountRoleValues)[number];
 export const assessmentModeValues = ["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"] as const;
 export type AssessmentMode = (typeof assessmentModeValues)[number];
+export const readingLanguageSupportValues = ["STANDARD_ENGLISH", "IRISH_ENGLISH_SUPPORT"] as const;
+export type ReadingLanguageSupport = (typeof readingLanguageSupportValues)[number];
 
 /** Core identity managed by Manus OAuth. Roles are assigned through the Reader Leader onboarding flow. */
 export const users = mysqlTable("users", {
@@ -62,6 +64,7 @@ export const learnerReadingSettings = mysqlTable("learnerReadingSettings", {
   childProfileId: int("childProfileId").notNull().unique().references(() => childProfiles.id, { onDelete: "cascade" }),
   defaultReadingMode: mysqlEnum("defaultReadingMode", assessmentModeValues).notNull().default("ASSISTED_PRACTICE"),
   targetWcpm: int("targetWcpm").notNull().default(100),
+  languageSupport: mysqlEnum("languageSupport", readingLanguageSupportValues).notNull().default("STANDARD_ENGLISH"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
@@ -151,6 +154,7 @@ export const readingSessions = mysqlTable("readingSessions", {
   audioStorageKey: varchar("audioStorageKey", { length: 512 }),
   completed: int("completed").notNull().default(1),
   assessmentMode: mysqlEnum("assessmentMode", assessmentModeValues).notNull().default("ASSISTED_PRACTICE"),
+  languageSupport: mysqlEnum("languageSupport", readingLanguageSupportValues).notNull().default("STANDARD_ENGLISH"),
   practiceWords: json("practiceWords").$type<string[]>().notNull(),
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
   wordStates: json("wordStates").$type<StoredWordState[]>().notNull(),

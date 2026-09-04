@@ -1,0 +1,2 @@
+ALTER TABLE `learnerReadingSettings` ADD `languageSupport` enum('STANDARD_ENGLISH','IRISH_ENGLISH_SUPPORT') DEFAULT 'STANDARD_ENGLISH' NOT NULL;--> statement-breakpoint
+ALTER TABLE `readingSessions` ADD `languageSupport` enum('STANDARD_ENGLISH','IRISH_ENGLISH_SUPPORT') DEFAULT 'STANDARD_ENGLISH' NOT NULL;

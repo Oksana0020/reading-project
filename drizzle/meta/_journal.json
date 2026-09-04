@@ -64,6 +64,13 @@
       "when": 1788561682500,
       "tag": "0008_gifted_silver_surfer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1788564216045,
+      "tag": "0009_strange_solo",
+      "breakpoints": true
     }
   ]
 }

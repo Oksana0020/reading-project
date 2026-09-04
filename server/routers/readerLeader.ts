@@ -60,6 +60,7 @@ const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
 const parentRole = z.literal("parent");
 const assessmentModeSchema = z.enum(["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MONTHLY_ASSESSMENT"]);
+const languageSupportSchema = z.enum(["STANDARD_ENGLISH", "IRISH_ENGLISH_SUPPORT"]);
 const trendDateRangeSchema = z.object({ startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional();
 const termPresetSchema = z.object({ name: z.string().trim().min(2).max(80), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
 const wordStateSchema = z.object({ id: z.string().regex(/^word-\d+$/), text: z.string().min(1).max(80), status: z.enum(["unread", "current", "correct", "incorrect", "retried_correct"]), attempts: z.number().int().min(0).max(12) });
@@ -205,12 +206,16 @@ export const readerLeaderRouter = router({
       const mimeType = input.audioMime?.startsWith("audio/") ? input.audioMime : "audio/webm";
       const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("wav") ? "wav" : "webm";
       const stored = await storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType);
-      const transcription = await (await import("../_core/voiceTranscription")).transcribeAudio({ audioUrl: await storageGetSignedUrl(stored.key), language: "en", prompt: "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes." });
+      const learnerSettings = await getLearnerReadingSettings(input.childProfileId);
+      const transcriptionPrompt = learnerSettings.languageSupport === "IRISH_ENGLISH_SUPPORT"
+        ? "Transcribe a child reading aloud in Irish English. Preserve the words as spoken, including regional pronunciation. Do not correct mistakes or convert dialect features."
+        : "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes.";
+      const transcription = await (await import("../_core/voiceTranscription")).transcribeAudio({ audioUrl: await storageGetSignedUrl(stored.key), language: "en", prompt: transcriptionPrompt });
       if ("error" in transcription) throw new Error(transcription.error);
-      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates);
-      const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
+      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport);
+      const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.eventType === "dialect_variation" ? "Irish English variation provisionally accepted — please confirm this reading moment from the saved audio." : event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
       const wordTimings = buildWordTimings(transcription.text, analysis.durationSeconds, transcription.segments);
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates, wordTimings });
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, languageSupport: learnerSettings.languageSupport, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates, wordTimings });
       return { session, analysis };
     }),
     save: protectedProcedure.input(z.object({
@@ -226,7 +231,8 @@ export const readerLeaderRouter = router({
     })).mutation(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can save this reading session." });
-      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds, input.assessmentMode, input.wordStates);
+      const learnerSettings = await getLearnerReadingSettings(input.childProfileId);
+      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => {
         const action: "prompt" | "model" | "stay_silent" | "teacher_review" = event.action === "teacher_review"
           ? "teacher_review"
@@ -236,11 +242,11 @@ export const readerLeaderRouter = router({
         return {
           word: event.expectedWord,
           action,
-          note: event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : event.action === "practise_gently" ? "Try that word again when you are ready." : "Reading event noted without interruption.",
+          note: event.eventType === "dialect_variation" ? "Irish English variation provisionally accepted — please confirm this reading moment from the saved audio." : event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : event.action === "practise_gently" ? "Try that word again when you are ready." : "Reading event noted without interruption.",
         };
       });
       const wordTimings = buildWordTimings(analysis.transcript, analysis.durationSeconds);
-      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates, wordTimings });
+      const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, languageSupport: learnerSettings.languageSupport, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates, wordTimings });
       return { session, analysis };
     }),
     childProgress: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -279,11 +285,11 @@ export const readerLeaderRouter = router({
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not available to your account." });
       return getLearnerReadingSettings(input.childProfileId);
     }),
-    saveSettings: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), defaultReadingMode: assessmentModeSchema, targetWcpm: z.number().int().min(30).max(250) })).mutation(async ({ ctx, input }) => {
+    saveSettings: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), defaultReadingMode: assessmentModeSchema, targetWcpm: z.number().int().min(30).max(250), languageSupport: languageSupportSchema.default("STANDARD_ENGLISH") })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not assigned to your class." });
-      return saveLearnerReadingSettings(input.childProfileId, { defaultReadingMode: input.defaultReadingMode, targetWcpm: input.targetWcpm });
+      return saveLearnerReadingSettings(input.childProfileId, { defaultReadingMode: input.defaultReadingMode, targetWcpm: input.targetWcpm, languageSupport: input.languageSupport });
     }),
   }),
   classes: router({

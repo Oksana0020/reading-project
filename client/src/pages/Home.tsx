@@ -8,6 +8,7 @@ import { TeacherDashboard } from "@/components/TeacherDashboard";
 import { ParentDashboard } from "@/components/ParentDashboard";
 import { trpc } from "@/lib/trpc";
 import { deriveLiveWordStates, firstGuidedModelWord, initialLiveWordStates, type LiveWordState } from "@shared/liveWordStates";
+import type { ReadingLanguageSupport } from "@shared/dialectSupport";
 import { ArrowLeft, Award, BookOpen, Check, ChevronRight, CirclePause, FileText, Flame, Headphones, Home as HomeIcon, LogOut, Mic, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Square, Star, Trophy, Upload, UsersRound, Volume2, WandSparkles } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -89,6 +90,7 @@ export default function Home() {
   const saveSession = trpc.readerLeader.sessions.save.useMutation({ onSuccess: data => { setSavedSessionId(data.session.id); void utils.readerLeader.sessions.childProgress.invalidate(); void utils.readerLeader.dashboards.teacher.invalidate(); void utils.readerLeader.dashboards.parent.invalidate(); } });
   const processedWords = useMemo(() => words(liveTranscript).length, [liveTranscript]);
   const selectedStoryWords = useMemo(() => selectedStory.text.match(/\S+\s*/g) ?? [], [selectedStory]);
+  const languageSupport = (childProgress.data?.learnerSettings?.languageSupport || "STANDARD_ENGLISH") as ReadingLanguageSupport;
 
   useEffect(() => {
     if (!isAuthenticated || accountQuery.isLoading || previousAccountRole.current === accountRole) return;
@@ -98,7 +100,7 @@ export default function Home() {
     else if (accountRole === "child") setView("library");
   }, [accountRole, accountQuery.isLoading, isAuthenticated]);
 
-  useEffect(() => { if (liveTranscript.trim()) setWordStates(deriveLiveWordStates(selectedStory.text, liveTranscript, assessmentMode)); }, [assessmentMode, liveTranscript, selectedStory.text]);
+  useEffect(() => { if (liveTranscript.trim()) setWordStates(deriveLiveWordStates(selectedStory.text, liveTranscript, assessmentMode, languageSupport)); }, [assessmentMode, languageSupport, liveTranscript, selectedStory.text]);
 
   useEffect(() => {
     if (assessmentMode !== "GUIDED_PRACTICE") return;

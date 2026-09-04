@@ -22,6 +22,7 @@ import {
   type AssessmentMode,
   type StoredWordState,
   type StoredWordTiming,
+  type ReadingLanguageSupport,
   users,
 } from "../drizzle/schema";
 import { getDb } from "./db";
@@ -68,7 +69,7 @@ export async function createChildProfile(userId: number, displayName: string, fa
   return profile;
 }
 
-const defaultLearnerSettings = (childProfileId: number) => ({ childProfileId, defaultReadingMode: "ASSISTED_PRACTICE" as AssessmentMode, targetWcpm: 100 });
+const defaultLearnerSettings = (childProfileId: number) => ({ childProfileId, defaultReadingMode: "ASSISTED_PRACTICE" as AssessmentMode, targetWcpm: 100, languageSupport: "STANDARD_ENGLISH" as ReadingLanguageSupport });
 
 export async function getLearnerReadingSettings(childProfileId: number) {
   const db = await requireDb();
@@ -76,7 +77,7 @@ export async function getLearnerReadingSettings(childProfileId: number) {
   return settings ?? defaultLearnerSettings(childProfileId);
 }
 
-export async function saveLearnerReadingSettings(childProfileId: number, settings: { defaultReadingMode: AssessmentMode; targetWcpm: number }) {
+export async function saveLearnerReadingSettings(childProfileId: number, settings: { defaultReadingMode: AssessmentMode; targetWcpm: number; languageSupport: ReadingLanguageSupport }) {
   const db = await requireDb();
   await db.insert(learnerReadingSettings).values({ childProfileId, ...settings }).onDuplicateKeyUpdate({ set: settings });
   return getLearnerReadingSettings(childProfileId);
@@ -277,13 +278,14 @@ export async function saveReadingSession(input: {
   durationSeconds: number;
   audioStorageKey?: string | null;
   assessmentMode?: AssessmentMode;
+  languageSupport?: ReadingLanguageSupport;
   practiceWords: string[];
   interventions: StoredIntervention[];
   wordStates?: StoredWordState[];
   wordTimings?: StoredWordTiming[];
 }) {
   const db = await requireDb();
-  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, assessmentMode: input.assessmentMode ?? "ASSISTED_PRACTICE", wordStates: input.wordStates ?? [], wordTimings: input.wordTimings ?? [], completed: 1 });
+  await db.insert(readingSessions).values({ ...input, materialId: input.materialId ?? null, audioStorageKey: input.audioStorageKey ?? null, assessmentMode: input.assessmentMode ?? "ASSISTED_PRACTICE", languageSupport: input.languageSupport ?? "STANDARD_ENGLISH", wordStates: input.wordStates ?? [], wordTimings: input.wordTimings ?? [], completed: 1 });
   const [session] = await db.select().from(readingSessions).where(eq(readingSessions.childProfileId, input.childProfileId)).orderBy(desc(readingSessions.id)).limit(1);
   if (!session) throw new Error("Could not save reading session.");
   return session;

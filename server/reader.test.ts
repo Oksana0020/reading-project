@@ -59,4 +59,18 @@ describe("Reader Leader prototype analysis", () => {
     const result = analyseReadingText("The glimmered lantern", "The lantern", 30, "GUIDED_PRACTICE", attempts);
     expect(result.modelWords).toContain("glimmered");
   });
+
+  it("accepts reviewed Irish English transcript variants provisionally and keeps them in teacher review", () => {
+    const result = analyseReadingText("The thin path was caught", "The tin pat was cot", 30, "ASSISTED_PRACTICE", undefined, "IRISH_ENGLISH_SUPPORT");
+    expect(result.accuracy).toBe(100);
+    expect(result.practiceWords).toEqual([]);
+    expect(result.events.filter(event => event.eventType === "dialect_variation")).toHaveLength(3);
+    expect(result.events.filter(event => event.eventType === "dialect_variation").every(event => event.action === "teacher_review")).toBe(true);
+  });
+
+  it("does not accept reviewed Irish English variants when the teacher has not enabled the support profile", () => {
+    const result = analyseReadingText("The caught kite", "The cot kite", 30);
+    expect(result.accuracy).toBeLessThan(100);
+    expect(result.events.some(event => event.eventType === "substitution")).toBe(true);
+  });
 });

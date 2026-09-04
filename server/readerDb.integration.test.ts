@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, teacherTermPresets, users } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, deleteTeacherTermPreset, getTeacherDashboard, listParentReminders, listTeacherTermPresets, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist, saveTeacherTermPreset } from "./readerDb";
+import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, deleteTeacherTermPreset, getLearnerReadingSettings, getTeacherDashboard, listParentReminders, listTeacherTermPresets, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist, saveLearnerReadingSettings, saveTeacherTermPreset } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
 const testKey = `rlt-${crypto.randomUUID()}`;
@@ -84,6 +84,18 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     expect(await listTeacherTermPresets(teacher.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: saved.id, name: "Autumn 2026", startDate: "2026-09-01", endDate: "2026-12-18" })]));
     expect(await deleteTeacherTermPreset(teacher.id, saved.id)).toEqual({ success: true });
     expect(await listTeacherTermPresets(teacher.id)).toHaveLength(0);
+  });
+
+  it("persists an Irish English support profile as a teacher-controlled learner plan", async () => {
+    const teacher = await insertUser(`${testKey}-irish-teacher`, "Irish Support Teacher", "teacher");
+    const readerClass = await createAdditionalClassForTeacher(teacher.id, "Irish Support Owls", `T${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`);
+    createdClassIds.push(readerClass.id);
+    const learner = await addLearnerToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, displayName: "Irish Support Learner", bookBand: "Level 3 · Sky Blue", familyCode: `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    createdUserIds.push(learner.profile.userId);
+    await saveLearnerReadingSettings(learner.profile.id, { defaultReadingMode: "GUIDED_PRACTICE", targetWcpm: 105, languageSupport: "IRISH_ENGLISH_SUPPORT" });
+
+    expect(await getLearnerReadingSettings(learner.profile.id)).toMatchObject({ defaultReadingMode: "GUIDED_PRACTICE", targetWcpm: 105, languageSupport: "IRISH_ENGLISH_SUPPORT" });
+    expect((await getTeacherDashboard(teacher.id)).pupils).toEqual(expect.arrayContaining([expect.objectContaining({ childProfileId: learner.profile.id, settings: expect.objectContaining({ languageSupport: "IRISH_ENGLISH_SUPPORT" }) })]));
   });
 
   it("creates one same-day parent reminder, records its read state, and does not duplicate it after re-completion", async () => {
