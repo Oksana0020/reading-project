@@ -120,3 +120,8 @@
 - [x] Investigate and reduce avoidable live speech-recognition latency while clearly disclosing remaining browser and server-transcription limits. (Interim transcript updates are batched, supported recognition restarts safely, recorder churn is reduced, and storage/transcription start concurrently after completion.)
 - [x] Add automated coverage and responsive browser validation for approvals, match confirmation, class defaults, and latency-status UI. (16 test files / 48 tests pass; integration coverage validates inheritance, approval, provisional review persistence, and confirmation, while authenticated 375 px and 768 px teacher captures validate the controls and guidance without overflow.)
 - [x] Update the copilot reference with educator approvals, class language defaults, match confirmation, and recognition-latency guidance. (Reference v1.8.0 now documents the educator workflow, exact procedure catalogue, data boundaries, responsiveness improvements, remaining limitations, validation evidence, and release history.)
+- [x] Add a real-time child-facing speech-recognition listening, processing, paused, and unavailable indicator during reading sessions.
+- [x] Add a teacher-authorised class CSV export for approved Irish English vocabulary variations.
+- [x] Add a dedicated teacher review tab for class-wide pending provisional speech matches with confirmation actions.
+- [x] Add automated coverage, responsive browser validation, and copilot documentation for the recognition indicator, variation export, and review tab.
+- [x] Remove conflicting live-listening copy when microphone access is unavailable and guided practice remains available.

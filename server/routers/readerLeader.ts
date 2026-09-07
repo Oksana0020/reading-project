@@ -30,6 +30,7 @@ import {
   getSessionPlayback,
   getTeacherMaterialReview,
   getTeacherDashboard,
+  getTeacherIrishVariantExport,
   getTeacherMonthlyTrendExport,
   listEducatorApprovedIrishVariants,
   listParentReminders,
@@ -62,6 +63,7 @@ import {
 import { storageGet, storagePut } from "../storage";
 import { buildWordTimings } from "../wordTiming";
 import { createMonthlyTrendCsv, monthlyTrendFilename } from "../trendExport";
+import { createIrishVariantCsv, irishVariantFilename } from "../irishVariantExport";
 
 const childRole = z.literal("child");
 const teacherRole = z.literal("teacher");
@@ -338,6 +340,11 @@ export const readerLeaderRouter = router({
     confirmMatch: protectedProcedure.input(z.object({ reviewId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
       return confirmProvisionalMatchReview(ctx.user.id, input.reviewId);
+    }),
+    csv: protectedProcedure.input(z.object({ classId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const exportData = await getTeacherIrishVariantExport(ctx.user.id, input.classId);
+      return { filename: irishVariantFilename(exportData.className), csv: createIrishVariantCsv(exportData.className, exportData.variants) };
     }),
   }),
   termPresets: router({

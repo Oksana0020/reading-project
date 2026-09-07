@@ -459,3 +459,16 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--yellow); outlin
 
 /* Recognition responsiveness guidance */
 .listen-status::after { content: " Live word highlights come from this browser. Your detailed saved-reading review is prepared after you finish."; display: block; margin-top: 4px; max-width: 48rem; color: #5a6881; font-size: 10px; font-weight: 650; line-height: 1.35; }
+.recognition-indicator { display: flex; align-items: center; gap: 10px; margin: 13px 16px 0; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fbff; color: #40516d; }
+.recognition-icon { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: #e8efff; color: #1d4ed8; }
+.recognition-indicator b,.recognition-indicator small { display: block; }.recognition-indicator b { font-size: 12px; }.recognition-indicator small { margin-top: 2px; font-size: 10px; line-height: 1.35; color: #60708b; font-weight: 700; }
+.recognition-indicator.listening { border-color: #8ac8ef; background: #eef9ff; }.recognition-indicator.listening .recognition-icon { background: #d9f2ff; color: #1178a9; }
+.recognition-indicator.processing { border-color: #f0d376; background: #fff9e7; }.recognition-indicator.processing .recognition-icon { background: #fff1bd; color: #986400; }
+.recognition-indicator.paused { background: #f8fafc; color: #52627f; }.recognition-indicator.unavailable { border-color: #f4b5ad; background: #fff4f2; }.recognition-indicator.unavailable .recognition-icon { background: #ffe2de; color: #b74132; }
+.status-spin { animation: status-spin .9s linear infinite; } @keyframes status-spin { to { transform: rotate(360deg); } }
+.educator-variants > div:first-child { display: grid; gap: 6px; }.educator-variants .csv-export { justify-self: start; width: auto; }
+.teacher-review-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 22px; padding: 8px; border: 1px solid #d8e1ef; border-radius: 14px; background: #f8fbff; }
+.teacher-review-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; border: 1px solid transparent; border-radius: 9px; padding: 8px 11px; background: transparent; color: #596982; font-size: 11px; font-weight: 900; }
+.teacher-review-tabs button.active { border-color: var(--ink); background: #fffef9; color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }.teacher-review-tabs button span { display: inline-grid; place-items: center; min-width: 19px; height: 19px; border-radius: 999px; background: #e5edff; color: #1d4ed8; font-family: "DM Mono", monospace; font-size: 10px; }
+@media (max-width: 640px) { .recognition-indicator { margin: 11px 12px 0; align-items: flex-start; }.recognition-indicator .wave { margin-top: 3px; }.teacher-review-tabs { display: grid; grid-template-columns: 1fr; }.teacher-review-tabs button { width: 100%; justify-content: space-between; }.educator-variants .csv-export { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .status-spin { animation: none; } }

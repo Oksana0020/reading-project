@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { childProfiles, classEnrollments, educatorApprovedIrishVariants, learnerReadingSettings, provisionalMatchReviews, readerClasses, readingSessions, users } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, approveIrishVariantForClass, confirmProvisionalMatchReview, createAdditionalClassForTeacher, createProvisionalMatchReviews, getLearnerReadingSettings, listEducatorApprovedIrishVariants, listTeacherProvisionalMatches, saveClassLanguageSupportDefault, saveReadingSession } from "./readerDb";
+import { addLearnerToTeacherClass, approveIrishVariantForClass, confirmProvisionalMatchReview, createAdditionalClassForTeacher, createProvisionalMatchReviews, getLearnerReadingSettings, getTeacherIrishVariantExport, listEducatorApprovedIrishVariants, listTeacherProvisionalMatches, saveClassLanguageSupportDefault, saveReadingSession } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
 const compactId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
@@ -31,6 +31,7 @@ describe.skipIf(!databaseAvailable)("Irish English educator approval workflow", 
 
       const approved = await approveIrishVariantForClass({ teacherUserId: teacher.id, classId: readerClass.id, expectedWord: "three", recognisedVariant: "tree" });
       expect(await listEducatorApprovedIrishVariants(teacher.id, readerClass.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: approved.id, expectedWord: "three", recognisedVariant: "tree" })]));
+      expect(await getTeacherIrishVariantExport(teacher.id, readerClass.id)).toEqual(expect.objectContaining({ className: "Irish Approval Owls", variants: [expect.objectContaining({ expectedWord: "three", recognisedVariant: "tree" })] }));
       const session = await saveReadingSession({ childProfileId: learner.profile.id, storyTitle: "Irish reading check", transcript: "tree", accuracy: 100, wordsCorrectPerMinute: 90, durationSeconds: 60, languageSupport: "IRISH_ENGLISH_SUPPORT", practiceWords: [], interventions: [] });
       const [review] = await createProvisionalMatchReviews({ sessionId: session.id, childProfileId: learner.profile.id, classId: readerClass.id, matches: [{ expectedWord: "three", recognisedWord: "tree", source: "educator_approved" }] });
       expect(await listTeacherProvisionalMatches(teacher.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: review.id, status: "pending", expectedWord: "three" })]));

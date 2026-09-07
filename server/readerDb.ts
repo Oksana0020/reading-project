@@ -161,6 +161,14 @@ export async function listEducatorApprovedIrishVariants(teacherUserId: number, c
   return db.select().from(educatorApprovedIrishVariants).where(eq(educatorApprovedIrishVariants.classId, classId)).orderBy(desc(educatorApprovedIrishVariants.updatedAt));
 }
 
+export async function getTeacherIrishVariantExport(teacherUserId: number, classId: number) {
+  const db = await requireDb();
+  const [readerClass] = await db.select({ id: readerClasses.id, name: readerClasses.name }).from(readerClasses).where(and(eq(readerClasses.id, classId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  const variants = await db.select({ expectedWord: educatorApprovedIrishVariants.expectedWord, recognisedVariant: educatorApprovedIrishVariants.recognisedVariant, updatedAt: educatorApprovedIrishVariants.updatedAt }).from(educatorApprovedIrishVariants).where(eq(educatorApprovedIrishVariants.classId, classId)).orderBy(desc(educatorApprovedIrishVariants.updatedAt));
+  return { className: readerClass.name, variants };
+}
+
 export async function approveIrishVariantForClass(input: { teacherUserId: number; classId: number; expectedWord: string; recognisedVariant: string }) {
   const db = await requireDb();
   const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, input.classId), eq(readerClasses.teacherUserId, input.teacherUserId))).limit(1);
