@@ -20,6 +20,13 @@ describe("live transcript word tracking", () => {
     expect(firstGuidedModelWord(states, new Set(["word-0"]))).toBeUndefined();
   });
 
+  it("keeps a three-attempt moved-on word incorrect while later words continue live progression", () => {
+    const states = deriveLiveWordStates("rain tapped softly", "wrong wrong wrong tapped softly", "ASSISTED_PRACTICE", "STANDARD_ENGLISH", [], new Map([["word-0", 3]]));
+    expect(states[0]).toMatchObject({ text: "rain", status: "incorrect", attempts: 3 });
+    expect(states[1]).toMatchObject({ text: "tapped", status: "correct", attempts: 1 });
+    expect(states[2]).toMatchObject({ text: "softly", status: "correct", attempts: 1 });
+  });
+
   it("keeps a reviewed Irish English live variant out of the red mismatch state when the profile is enabled", () => {
     const supported = deriveLiveWordStates("The thin path", "The tin pat", "ASSISTED_PRACTICE", "IRISH_ENGLISH_SUPPORT");
     const standard = deriveLiveWordStates("The thin path", "The tin pat", "ASSISTED_PRACTICE", "STANDARD_ENGLISH");

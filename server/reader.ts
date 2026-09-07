@@ -63,7 +63,8 @@ export function analyseReadingText(expectedText: string, transcript: string, dur
   const retrySummary = resolvedStates.filter(state => state.attempts > 1).map(state => ({ word: state.text, retries: state.attempts - 1 }));
   const selfCorrections = resolvedStates.filter(state => state.status === "retried_correct").map(state => state.text);
   const notableEvents = events.filter(event => event.eventType === "substitution" || event.eventType === "omission");
-  const practiceWords = mode === "MONTHLY_ASSESSMENT" ? [] : Array.from(new Set(notableEvents.map(event => event.expectedWord).filter(word => word.length > 3))).slice(0, 3);
+  const skippedPracticeWords = resolvedStates.filter(state => state.status === "incorrect" && state.attempts >= 3).map(state => state.text);
+  const practiceWords = mode === "MONTHLY_ASSESSMENT" ? [] : Array.from(new Set([...skippedPracticeWords, ...notableEvents.map(event => event.expectedWord)].filter(word => word.length > 3))).slice(0, 3);
   const modelWords = mode === "GUIDED_PRACTICE" ? resolvedStates.filter(state => state.status === "incorrect" && state.attempts >= 2).map(state => state.text) : [];
   const effectiveDuration = Math.max(20, Math.round(durationSeconds || 60));
   const firstPassAccuracy = expected.length ? Math.round((firstPassCorrectWords / expected.length) * 100) : 0;

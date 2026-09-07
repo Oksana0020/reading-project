@@ -11,12 +11,22 @@ export function initialLiveWordStates(text: string): LiveWordState[] {
 }
 
 /** Applies the current full live-transcript result against the expected passage. */
-export function deriveLiveWordStates(expectedText: string, transcript: string, mode: LiveAssessmentMode, languageSupport: ReadingLanguageSupport = "STANDARD_ENGLISH", educatorApprovedVariants: EducatorApprovedIrishVariant[] = []): LiveWordState[] {
+export function deriveLiveWordStates(expectedText: string, transcript: string, mode: LiveAssessmentMode, languageSupport: ReadingLanguageSupport = "STANDARD_ENGLISH", educatorApprovedVariants: EducatorApprovedIrishVariant[] = [], movedOnAttempts: ReadonlyMap<string, number> = new Map()): LiveWordState[] {
   const states = initialLiveWordStates(expectedText);
   let expectedIndex = 0;
-  for (const heardWord of tokenize(transcript)) {
+  const heardWords = tokenize(transcript);
+  let heardIndex = 0;
+  while (heardIndex < heardWords.length) {
+    while (expectedIndex < states.length && movedOnAttempts.has(states[expectedIndex].id)) {
+      states[expectedIndex].status = "incorrect";
+      const priorAttempts = movedOnAttempts.get(states[expectedIndex].id) ?? 3;
+      states[expectedIndex].attempts = Math.max(3, priorAttempts);
+      heardIndex += priorAttempts;
+      expectedIndex += 1;
+    }
     const state = states[expectedIndex];
     if (!state) break;
+    const heardWord = heardWords[heardIndex];
     const matches = matchExpectedReadingWord(state.text, heardWord, languageSupport, educatorApprovedVariants).matches;
     state.attempts += 1;
     if (mode === "MONTHLY_ASSESSMENT") {
@@ -28,7 +38,14 @@ export function deriveLiveWordStates(expectedText: string, transcript: string, m
     } else {
       state.status = "incorrect";
     }
+    heardIndex += 1;
   }
+  for (let index = 0; index < states.length; index += 1) {
+    if (!movedOnAttempts.has(states[index].id)) continue;
+    states[index].status = "incorrect";
+    states[index].attempts = Math.max(3, movedOnAttempts.get(states[index].id) ?? 3);
+  }
+  while (expectedIndex < states.length && movedOnAttempts.has(states[expectedIndex].id)) expectedIndex += 1;
   if (expectedIndex < states.length && states[expectedIndex].status === "unread") states[expectedIndex].status = "current";
   return states;
 }

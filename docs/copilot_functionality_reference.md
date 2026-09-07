@@ -1,6 +1,6 @@
 # Reader Leader: Current Functionality Reference for Copilot
 
-> **Reference version:** `1.11.0` · **Status:** current working release · **Updated:** 2026-09-07
+> **Reference version:** `1.12.0` · **Status:** current working release · **Updated:** 2026-09-07
 
 This document is the **current functional inventory** of Reader Leader. It is intended to help a copilot, engineer, product owner, or reviewer understand what is implemented, which role may use each capability, and the key boundaries that must be preserved when extending the system.
 
@@ -24,9 +24,9 @@ This document is the **current functional inventory** of Reader Leader. It is in
 
 Children open a personalised **Reading Library** labelled with their own name, such as **Amina’s Reading Progress**. The library presents teacher-assigned passages, saved reading activity, quiz history, progress information, and child-appropriate report shortcuts. A child only sees their own profile, their own assigned materials, and their own saved sessions.
 
-### Live read-aloud canvas
+### Live read-aloud canvas and Kids Mode
 
-The reading canvas presents a focused passage view with punctuation-aware word spacing, a visible reading-mode badge, recording controls, pause/restart actions, word-state rendering, and a completion path. A live visual status indicator distinguishes **Ready to listen**, **Listening**, **Processing your words**, **Reading paused**, **Live listening unavailable**, and **Making your Reading Report**. A separate, lightweight device connection indicator labels **good**, **fair**, **slow**, **offline**, or **unavailable** connection information when the browser makes it available. It is a local diagnostic, is not stored as telemetry, and is never a reading score. The browser can provide a live speech preview while a session is in progress. Interim updates are coalesced and supported continuous recognition restarts safely, reducing avoidable interface delay. Completed recording storage and server transcription begin concurrently, avoiding the former serial upload/download round trip; detailed transcription still completes after the child finishes reading.
+When a child launches a story, the focused **Kids Mode** canvas removes global navigation, mode pickers, teacher/debug controls, technical connection/recognition tiles, decision banners, transcript previews, and support-card footers. It presents only **Back to Reading Library**, the story title, page-progress label/track, large high-contrast passage text, unobtrusive word states, and a floating **Hear page**, **Tap to Read**, and **Finish story** control bar. The app still internally distinguishes ready, listening, processing, paused, unavailable, and report-preparation states so it can act safely, but children see only short, child-friendly status language. The browser can provide a live speech preview while a session is in progress. Interim updates are coalesced and supported continuous recognition restarts safely, reducing avoidable interface delay. Completed recording storage and server transcription begin concurrently, avoiding the former serial upload/download round trip; detailed transcription still completes after the child finishes reading.
 
 > **ASR boundary:** This is a prototype support tool, not a production-grade child speech-recognition or diagnostic assessment system. Adults should review low-confidence reading moments with the child and use their professional judgement.
 
@@ -38,19 +38,21 @@ The reading canvas presents a focused passage view with punctuation-aware word s
 | **Guided Practice** | Behaves like Assisted Practice, but after two unsuccessful attempts on a word, the microphone pauses and a model-audio prompt is offered before the next retry. | Records the guided prompt and retry pattern for supportive follow-up. |
 | **Monthly Assessment** | Advances quietly without red corrections, retry controls, or interruption prompts. | Incorrect words are logged silently for teacher review. Story match and WCPM use the first pass only, and correction-prompt replay is disabled. |
 
+In **Assisted Practice** and **Guided Practice**, after a third unsuccessful attempt, the child receives a small **Need help—move on** action. Choosing it marks that expected word as incorrect, advances the expected word, and lets the child continue reading without another correction barrier. The next recognised word still aligns correctly. **Monthly Assessment** already continues after a first-pass mismatch so the child is not interrupted.
+
 ### Word tracking and self-correction
 
 Each passage word has a persistent/readable state model: `unread`, `current`, `correct`, `incorrect`, or `retried_correct`. The system tracks the number of attempts and retry history. This allows the child experience to encourage self-correction in practice modes and lets adults review the underlying session details without treating the result as a clinical diagnosis.
 
 ### Child reports, achievements, and quizzes
 
-The child receives supportive completion feedback covering story match, pace/WCPM, completion, practice words, and a next-step activity. The system also tracks progress history, saved sessions, streaks, and achievements. Child-facing celebration PDFs can be downloaded from authorised child views.
+The child receives supportive completion feedback covering story match, pace/WCPM, completion, practice words, and a next-step activity. Skipped and incorrect words become age-appropriate **Repeat & listen** post-reading activities, each with optional model playback and a completion check. Where an authorised saved recording exists, the child can also replay their own reading from the report. The system tracks progress history, saved sessions, streaks, and achievements. Child-facing celebration PDFs can be downloaded from authorised child views.
 
 After a teacher-assigned passage is completed, the child can open a comprehension quiz with clear question controls, feedback and explanations. Attempts are stored, quiz retry is supported, and prior progress remains available in the library.
 
 ### Guided warm-up and cognitive reading supports
 
-Before a child launches a story, a **Vocabulary & Sound Warm-Up** dialog offers three friendly story words, local text-to-speech listening controls, and a sound-focus prompt. Starting Guided Practice then shows real-time word-state highlighting and a compact encouragement card that adapts to a retry or hesitation state; it is a practice prompt, not a speech diagnosis. The Reading Library now frames activities through four cognitive reading pillars: **Memory**, **Attention**, **Processing Speed**, and **Phonics / Sequencing**.
+Before a child launches a story, a **Vocabulary & Sound Warm-Up** dialog offers three friendly story words, local text-to-speech listening controls, and a sound-focus prompt. Starting Guided Practice then shows real-time word-state highlighting. After two unsuccessful attempts, a soft pulse and inline **Tap word to hear sound** cue offers child-controlled model audio instead of a full-screen interruption; it is a practice prompt, not a speech diagnosis. The Reading Library frames activities through four cognitive reading pillars: **Memory**, **Attention**, **Processing Speed**, and **Phonics / Sequencing**.
 
 ## 3. Teacher experience
 
@@ -199,8 +201,8 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 11. Do not represent the Irish English support profile as comprehensive dialect recognition, accent classification, or a clinical/educational diagnosis. Keep provisional matches available for teacher listening and review.
 12. Apply class language-support defaults only when creating learner plans. Existing learner preferences must remain explicit and unchanged until a teacher saves a new individual plan.
 13. Treat educator-approved word pairs as class-scoped, teacher-authored review context. Preserve their provenance, protect them with teacher ownership checks, and require a teacher confirmation for each provisional saved-session event.
-14. Explain recognition responsiveness honestly: browser live preview depends on browser/connection behaviour and detailed server transcription occurs after completion. Use the child recognition-status indicator to signal unavailable, listening, processing, paused, and saved-analysis states; avoid promising a fixed response time.
-15. Treat the connection indicator as a local, optional browser hint only. Do not persist it, use it to judge reading performance, or present it as an ASR-quality guarantee.
+14. Explain recognition responsiveness honestly: browser live preview depends on browser/connection behaviour and detailed server transcription occurs after completion. Internal recognition state must still handle unavailable, listening, processing, paused, and saved-analysis states, but Kids Mode should show only concise child-friendly feedback and must not promise a fixed response time.
+15. Treat any connection information as a local, optional browser hint only. Do not persist it, use it to judge reading performance, or present it as an ASR-quality guarantee; do not show it inside the immersive Kids Mode canvas.
 16. Parent workspace handoffs must clear the current session and require the target role to sign in. Never use a parent dashboard link to bypass child or teacher access checks.
 
 ## 8. Current routes and workflow destinations
@@ -260,12 +262,13 @@ The Teacher Dashboard includes an interactive three-step onboarding guide direct
 | `1.9.0` | Pending checkpoint | Child real-time recognition status, class-scoped approved-variation CSV export, and a dedicated class-wide pending speech-match review tab. |
 | `1.10.0` | `452265de` | Secure parent workspace handoffs, learner/session-date review filters, a lightweight child connection diagnostic, branded printable class review, and reference-platform-informed product ideas. |
 | `1.11.0` | Pending checkpoint | Guided Vocabulary & Sound Warm-Up, cognitive reading pillars, supportive live prompt states, weekly goals, categorised teacher Speech Review, parent co-reading and fluency trajectory, authorised best-moment playback, and explicit non-diagnostic measurement boundaries. |
+| `1.12.0` | Pending checkpoint | Immersive child Kids Mode, third-attempt Need help—move on progression, skipped-word repeat/listen activities, child authorised recording replay, and removal of reading-screen debug/technical clutter. |
 
 When a release materially changes functionality, increment the reference version, add a row to this table, update the procedure catalogue if API contracts changed, and revise the validation status below with the new test count and browser checks.
 
 ## 12. Current validation status
 
-The current build has passed TypeScript checking and **19 automated test files / 53 tests**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in matching, educator-approved variant provenance, class-default inheritance, provisional review persistence, teacher confirmation, approved-variation CSV formatting/export ownership, printable class-variation reports, local connection-quality classification, live word-state behaviour, persisted language-support settings, and weekly-goal persistence/progress aggregation. Authenticated browser validation has covered the role portal, child warm-up and unavailable-microphone fallback, weekly goal saving, teacher MIS mapping/import/onboarding/term-preset controls, approved-variation CSV download, the dedicated pending-speech-match tab, saved Irish English support plans, class defaults and variant approval controls, parent reminder filters and bulk handling, co-reading prompts, best-moment playback, and responsive mobile/tablet layouts.
+The current build has passed TypeScript checking and **19 automated test files / 54 tests**. Automated coverage includes reader state/mode logic, third-attempt move-on alignment, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in matching, educator-approved variant provenance, class-default inheritance, provisional review persistence, teacher confirmation, approved-variation CSV formatting/export ownership, printable class-variation reports, local connection-quality classification, persisted language-support settings, and weekly-goal persistence/progress aggregation. Authenticated browser validation has covered the role portal, child warm-up, Kids Mode canvas, teacher MIS mapping/import/onboarding/term-preset controls, approved-variation CSV download, the dedicated pending-speech-match tab, saved Irish English support plans, class defaults and variant approval controls, parent reminder filters and bulk handling, co-reading prompts, best-moment playback, and responsive mobile/tablet layouts.
 
 ## References
 
