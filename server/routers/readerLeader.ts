@@ -54,6 +54,7 @@ import {
   seedDemoCohort,
   saveReadingSession,
   saveLearnerReadingSettings,
+  saveWeeklyReadingGoal,
   saveClassLanguageSupportDefault,
   saveHomePracticeChecklist,
   markParentReminderRead,
@@ -75,6 +76,7 @@ const assessmentModeSchema = z.enum(["GUIDED_PRACTICE", "ASSISTED_PRACTICE", "MO
 const languageSupportSchema = z.enum(["STANDARD_ENGLISH", "IRISH_ENGLISH_SUPPORT"]);
 const trendDateRangeSchema = z.object({ startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional();
 const termPresetSchema = z.object({ name: z.string().trim().min(2).max(80), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+const weeklyGoalSchema = z.object({ childProfileId: z.number().int().positive(), weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), targetMinutes: z.number().int().min(5).max(600), targetSessions: z.number().int().min(1).max(14), note: z.string().trim().max(240).optional() });
 const wordStateSchema = z.object({ id: z.string().regex(/^word-\d+$/), text: z.string().min(1).max(80), status: z.enum(["unread", "current", "correct", "incorrect", "retried_correct"]), attempts: z.number().int().min(0).max(12) });
 const exerciseSetSchema = z.object({
   vocabulary: z.array(z.object({ word: z.string().min(1).max(50), childFriendlyMeaning: z.string().min(1).max(200) })).min(3).max(6),
@@ -307,6 +309,12 @@ export const readerLeaderRouter = router({
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed) throw new TRPCError({ code: "FORBIDDEN", message: "This learner is not assigned to your class." });
       return saveLearnerReadingSettings(input.childProfileId, { defaultReadingMode: input.defaultReadingMode, targetWcpm: input.targetWcpm, languageSupport: input.languageSupport });
+    }),
+  }),
+  weeklyGoals: router({
+    save: protectedProcedure.input(weeklyGoalSchema).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return saveWeeklyReadingGoal(ctx.user.id, input);
     }),
   }),
   classes: router({

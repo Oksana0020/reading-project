@@ -64,6 +64,31 @@ export function SessionAudioButton({ sessionId, label = "Play recording" }: { se
   return <button className="audio-action" onClick={() => void play()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button>;
 }
 
+export function SessionHighlightButton({ sessionId, label = "Hear a reading highlight" }: { sessionId?: number | null; label?: string }) {
+  const [playing, setPlaying] = useState(false);
+  const audioUrl = trpc.readerLeader.sessions.audioUrl.useQuery({ sessionId: sessionId ?? 1 }, { enabled: false, retry: false });
+  const playHighlight = async () => {
+    if (!sessionId) return toast("This saved session does not include an audio recording.");
+    const result = await audioUrl.refetch();
+    const data = result.data as PlaybackData | undefined;
+    if (!data?.url) return toast(result.error?.message || "This recording is unavailable.");
+    const timing = data.wordTimings[Math.min(2, Math.max(0, data.wordTimings.length - 1))];
+    const audio = new Audio(data.url);
+    setPlaying(true);
+    const stop = () => { audio.pause(); setPlaying(false); };
+    audio.onerror = () => { setPlaying(false); toast("This recording could not be played."); };
+    if (timing) {
+      audio.currentTime = timing.startMs / 1000;
+      audio.onloadedmetadata = async () => { try { await audio.play(); window.setTimeout(stop, Math.max(200, timing.endMs - timing.startMs + 150)); } catch { setPlaying(false); toast("Your browser blocked audio playback. Please try again."); } };
+      audio.load();
+    } else {
+      audio.onended = () => setPlaying(false);
+      try { await audio.play(); } catch { setPlaying(false); toast("Your browser blocked audio playback. Please try again."); }
+    }
+  };
+  return <button className="audio-action best-moment-action" onClick={() => void playHighlight()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button>;
+}
+
 type WordTiming = { id: string; text: string; startMs: number; endMs: number };
 type PlaybackData = { url: string; transcript: string; wordTimings: WordTiming[] };
 

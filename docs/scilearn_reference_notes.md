@@ -7,6 +7,8 @@
 
 The learner interface separates work into three clear destinations: **My Assignments**, **Demos**, and **Resources**. Its assignment view uses a simple “Choose an assignment” entry point. The demo area groups short practice activities by increasing reading level and makes clear that demo points/progress are not counted. The resources area contains printable reading-strategy charts, student checklists, completion/streak charts, keyboard-shortcut guides, activity-specific help sheets, and short introductory/tutorial videos.
 
+The assignment page also makes the learner's next destination unambiguous, separates assigned work from Demos and Resources in the top navigation, and provides concise recovery guidance when an assignment launch or browser state is not ready. These patterns support Reader Leader additions such as a focused warm-up before an assigned story, clear live-reading readiness feedback, and a child-facing non-assessed practice area. No learner names, assignments, performance data, or account content from the reference platform are retained in this document.
+
 ## Transferable Reader Leader opportunities
 
 | Observed pattern | Practical Reader Leader adaptation | Safeguard |

@@ -1,6 +1,6 @@
 # Reader Leader: Current Functionality Reference for Copilot
 
-> **Reference version:** `1.10.0` · **Status:** current working release · **Updated:** 2026-09-07
+> **Reference version:** `1.11.0` · **Status:** current working release · **Updated:** 2026-09-07
 
 This document is the **current functional inventory** of Reader Leader. It is intended to help a copilot, engineer, product owner, or reviewer understand what is implemented, which role may use each capability, and the key boundaries that must be preserved when extending the system.
 
@@ -48,6 +48,10 @@ The child receives supportive completion feedback covering story match, pace/WCP
 
 After a teacher-assigned passage is completed, the child can open a comprehension quiz with clear question controls, feedback and explanations. Attempts are stored, quiz retry is supported, and prior progress remains available in the library.
 
+### Guided warm-up and cognitive reading supports
+
+Before a child launches a story, a **Vocabulary & Sound Warm-Up** dialog offers three friendly story words, local text-to-speech listening controls, and a sound-focus prompt. Starting Guided Practice then shows real-time word-state highlighting and a compact encouragement card that adapts to a retry or hesitation state; it is a practice prompt, not a speech diagnosis. The Reading Library now frames activities through four cognitive reading pillars: **Memory**, **Attention**, **Processing Speed**, and **Phonics / Sequencing**.
+
 ## 3. Teacher experience
 
 ### Teacher dashboard and class management
@@ -74,6 +78,10 @@ The teacher dashboard is a role-scoped workspace for reviewing learners, classes
 ### Learner reading plans
 
 For each learner in scope, a teacher can choose a default reading mode—Assisted Practice, Guided Practice, or Monthly Assessment—and set a target WCPM. The plan is saved per learner, persists across sign-in/reload, and is applied when that child opens an assigned story.
+
+### Weekly goals and teacher-reviewed fluency context
+
+Teachers can set or update a learner-specific current-week goal for reading minutes, completed sessions, and a short encouraging focus note. The authorised dashboard derives progress from saved sessions in that week and displays it as a practical conversation aid. Learner cards pair the teacher-set WCPM target with a **WCPM prototype signal** and a teacher-review reminder. Fields labelled Grade Equivalent, Percentile Rank, and Lexile measure intentionally state **Not calculated** or **Not assessed**: Reader Leader does not estimate these proprietary or norm-referenced measures and must not represent its signals as validated clinical, diagnostic, or standardised assessment outputs.
 
 ### Irish English variation support
 
@@ -121,6 +129,8 @@ Teachers can review saved reading sessions, relevant flags, transcript outcomes,
 
 For recordings with saved timing metadata, a teacher can open **word-linked playback** and click a transcript word to seek to its audio moment. The player uses an inspectable authorised audio element, seeks to the word start, and plays a short word window. Real-recording word timing is approximate because it is derived from transcription segments; the technical demo fixture is clearly labelled non-speech audio and demonstrates exact seek/stop behaviour.
 
+The **Speech Review Panel** groups authorised saved-session moments into **Phonemic Decoding**, **Fluency / Rate**, and **Regional Accent variations**. Each moment offers word-linked playback only after the teacher chooses to open the matching saved audio. Category labels guide attention and do not make a clinical interpretation, diagnosis, or placement decision.
+
 ### School-branded reports
 
 Teachers can set a school name, report accent colour, and supportive footer message. Those branding settings feed the child celebration, parent progress, and teacher running-record PDF report outputs.
@@ -132,6 +142,8 @@ Parents use a role-specific **Family Reading Space**. Teacher/administrator-only
 ### Parent progress view
 
 The dashboard uses parent-friendly, celebratory language instead of raw administrative metrics. It shows **Minutes Read This Week**, badges such as **Persistent Reader**, a stories-shared count, recent strengths, and the linked child’s monthly trend chart. Parents can download an authorised parent-friendly progress summary and, when authorised, play the child’s latest saved recording.
+
+The Family Reading Space also includes a simple **Fluency trajectory** of recent saved-session WCPM values, explicitly labelled as a conversation aid rather than diagnosis. A parent may open a five-minute **Read together** modal whose prompts are based on the child’s latest story and current practice words. If any authorised recording exists, **Hear child’s best moment** selects the latest stored-audio session rather than being hidden because a newer non-recorded session was saved.
 
 ### Home-practice checklist
 
@@ -213,6 +225,7 @@ The system uses typed tRPC procedures under `readerLeader`. The client should co
 | `irishVariants` | `list`, `approve`, `remove`, `csv`, `pendingMatches`, `confirmMatch` | Lets an authorised teacher maintain class-scoped reviewed word pairs, export an authorised class CSV, filter their pending provisional matches by class, learner, and review date, and confirm a saved-session variation after review. |
 | `termPresets` | `list`, `save`, `remove` | Persists teacher-owned named reporting windows with validated inclusive dates. |
 | `reports` | `monthlyTrend`, `monthlyTrendCsv`, `classVariationReviewPdf`, `download`, `downloadPdf` | Produces teacher trend data/CSV exports, a branded class variation review PDF, and audience-specific reading reports with ownership checks. |
+| `weeklyGoals` | `save` | Creates or updates a teacher-owned learner goal for the validated current school week, including minute/session targets and an optional focus note. |
 | `homePractice` | `saveChecklist`, `reminders`, `markReminderRead`, `markAllRemindersRead` | Saves a parent’s daily checklist, returns linked-child/date-filtered history, and updates reminder read states. |
 | `quizzes` | `forAssignedMaterial`, `submit`, `history` | Provides child-only comprehension quizzes, submitted answers, feedback, and retry history. |
 | `branding` | `mine`, `save` | Manages teacher-owned PDF branding settings. |
@@ -245,12 +258,14 @@ The Teacher Dashboard includes an interactive three-step onboarding guide direct
 | `1.7.0` | `8b9a1384` | Teacher-configured Irish English support profile, transcription preservation context, bounded reviewed-variation matching, provisional teacher-review events, and responsive learner-plan controls. |
 | `1.8.0` | Pending checkpoint | Educator-approved class lexicons, per-match teacher confirmation, class language-support defaults for newly added learners, and lower-latency live/saved recognition processing. |
 | `1.9.0` | Pending checkpoint | Child real-time recognition status, class-scoped approved-variation CSV export, and a dedicated class-wide pending speech-match review tab. |
+| `1.10.0` | `452265de` | Secure parent workspace handoffs, learner/session-date review filters, a lightweight child connection diagnostic, branded printable class review, and reference-platform-informed product ideas. |
+| `1.11.0` | Pending checkpoint | Guided Vocabulary & Sound Warm-Up, cognitive reading pillars, supportive live prompt states, weekly goals, categorised teacher Speech Review, parent co-reading and fluency trajectory, authorised best-moment playback, and explicit non-diagnostic measurement boundaries. |
 
 When a release materially changes functionality, increment the reference version, add a row to this table, update the procedure catalogue if API contracts changed, and revise the validation status below with the new test count and browser checks.
 
 ## 12. Current validation status
 
-The current build has passed TypeScript checking and **50 automated tests across 17 test files**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in matching, educator-approved variant provenance, class-default inheritance, provisional review persistence, teacher confirmation, approved-variation CSV formatting/export ownership, live word-state behaviour, and persisted language-support settings. Authenticated browser validation has covered the role portal, child reading flows and unavailable-microphone fallback, teacher MIS mapping/import/onboarding/term-preset controls, approved-variation CSV download, the dedicated pending-speech-match tab, the saved Irish English support plan, class default and variant approval controls, parent reminder filters, badge and mark-all controls, and responsive mobile/tablet layouts.
+The current build has passed TypeScript checking and **19 automated test files / 53 tests**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in matching, educator-approved variant provenance, class-default inheritance, provisional review persistence, teacher confirmation, approved-variation CSV formatting/export ownership, printable class-variation reports, local connection-quality classification, live word-state behaviour, persisted language-support settings, and weekly-goal persistence/progress aggregation. Authenticated browser validation has covered the role portal, child warm-up and unavailable-microphone fallback, weekly goal saving, teacher MIS mapping/import/onboarding/term-preset controls, approved-variation CSV download, the dedicated pending-speech-match tab, saved Irish English support plans, class defaults and variant approval controls, parent reminder filters and bulk handling, co-reading prompts, best-moment playback, and responsive mobile/tablet layouts.
 
 ## References
 

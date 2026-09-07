@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, teacherTermPresets, users } from "../drizzle/schema";
+import { childProfiles, classEnrollments, familyLinks, homePracticeChecklists, learnerReadingSettings, parentReminders, readerClasses, teacherTermPresets, users, weeklyReadingGoals } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, deleteTeacherTermPreset, getLearnerReadingSettings, getTeacherDashboard, listParentReminders, listTeacherTermPresets, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist, saveLearnerReadingSettings, saveTeacherTermPreset } from "./readerDb";
+import { addLearnerToTeacherClass, addLearnersToTeacherClass, createAdditionalClassForTeacher, currentWeekStart, deleteTeacherTermPreset, getLearnerReadingSettings, getTeacherDashboard, listParentReminders, listTeacherTermPresets, markAllParentRemindersRead, markParentReminderRead, saveHomePracticeChecklist, saveLearnerReadingSettings, saveTeacherTermPreset, saveWeeklyReadingGoal } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
 const testKey = `rlt-${crypto.randomUUID()}`;
@@ -31,6 +31,7 @@ afterEach(async () => {
     await db.delete(familyLinks).where(eq(familyLinks.parentUserId, parentId));
   }
   for (const userId of createdUserIds) await db.delete(teacherTermPresets).where(eq(teacherTermPresets.teacherUserId, userId));
+  for (const userId of createdUserIds) await db.delete(weeklyReadingGoals).where(eq(weeklyReadingGoals.teacherUserId, userId));
   for (const classId of createdClassIds) await db.delete(classEnrollments).where(eq(classEnrollments.classId, classId));
   for (const userId of createdUserIds) {
     await db.delete(learnerReadingSettings).where(eq(learnerReadingSettings.childProfileId, userId));
@@ -84,6 +85,18 @@ describe.skipIf(!databaseAvailable)("Reader Leader persisted class and reminder 
     expect(await listTeacherTermPresets(teacher.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: saved.id, name: "Autumn 2026", startDate: "2026-09-01", endDate: "2026-12-18" })]));
     expect(await deleteTeacherTermPreset(teacher.id, saved.id)).toEqual({ success: true });
     expect(await listTeacherTermPresets(teacher.id)).toHaveLength(0);
+  });
+
+  it("assigns an individual current-week reading goal and includes it in the teacher learner summary", async () => {
+    const teacher = await insertUser(`${testKey}-goal-teacher`, "Goal Teacher", "teacher");
+    const readerClass = await createAdditionalClassForTeacher(teacher.id, "Goal Owls", `T${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`);
+    createdClassIds.push(readerClass.id);
+    const learner = await addLearnerToTeacherClass({ teacherUserId: teacher.id, classId: readerClass.id, displayName: "Goal Learner", bookBand: "Level 4 · Gold", familyCode: `F${crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}` });
+    createdUserIds.push(learner.profile.userId);
+    const weekStart = currentWeekStart(new Date("2026-09-07T12:00:00.000Z"));
+    const saved = await saveWeeklyReadingGoal(teacher.id, { childProfileId: learner.profile.id, weekStart, targetMinutes: 30, targetSessions: 4, note: "Take your time with new words." });
+    expect(saved).toMatchObject({ childProfileId: learner.profile.id, weekStart, targetMinutes: 30, targetSessions: 4 });
+    expect((await getTeacherDashboard(teacher.id)).pupils).toEqual(expect.arrayContaining([expect.objectContaining({ childProfileId: learner.profile.id, weeklyGoal: expect.objectContaining({ targetMinutes: 30, targetSessions: 4 }) })]));
   });
 
   it("persists an Irish English support profile as a teacher-controlled learner plan", async () => {

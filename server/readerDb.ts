@@ -18,6 +18,7 @@ import {
   schoolBranding,
   sessionComments,
   teacherTermPresets,
+  weeklyReadingGoals,
   type ExerciseSet,
   type QuizAnswer,
   type StoredIntervention,
@@ -136,6 +137,39 @@ export async function deleteTeacherTermPreset(teacherUserId: number, presetId: n
   const db = await requireDb();
   await db.delete(teacherTermPresets).where(and(eq(teacherTermPresets.id, presetId), eq(teacherTermPresets.teacherUserId, teacherUserId)));
   return { success: true } as const;
+}
+
+export type WeeklyReadingGoalInput = { childProfileId: number; weekStart: string; targetMinutes: number; targetSessions: number; note?: string };
+
+export function currentWeekStart(now = new Date()) {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+function isWeekStart(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00.000Z`).getUTCDay() === 1;
+}
+
+export async function saveWeeklyReadingGoal(teacherUserId: number, input: WeeklyReadingGoalInput) {
+  if (!isWeekStart(input.weekStart)) throw new Error("Choose the Monday that starts this reading-goal week.");
+  const db = await requireDb();
+  const [enrolment] = await db.select({ childProfileId: classEnrollments.childProfileId }).from(classEnrollments)
+    .innerJoin(readerClasses, eq(classEnrollments.classId, readerClasses.id))
+    .where(and(eq(classEnrollments.childProfileId, input.childProfileId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!enrolment) throw new Error("This learner is not assigned to your class.");
+  const values = { teacherUserId, childProfileId: input.childProfileId, weekStart: input.weekStart, targetMinutes: input.targetMinutes, targetSessions: input.targetSessions, note: input.note?.trim() || null };
+  await db.insert(weeklyReadingGoals).values(values).onDuplicateKeyUpdate({ set: { targetMinutes: values.targetMinutes, targetSessions: values.targetSessions, note: values.note, updatedAt: new Date() } });
+  const [goal] = await db.select().from(weeklyReadingGoals).where(and(eq(weeklyReadingGoals.teacherUserId, teacherUserId), eq(weeklyReadingGoals.childProfileId, input.childProfileId), eq(weeklyReadingGoals.weekStart, input.weekStart))).limit(1);
+  if (!goal) throw new Error("Could not save this weekly reading goal.");
+  return goal;
+}
+
+export function summariseWeeklyGoalProgress(sessions: { createdAt: Date; durationSeconds: number }[], weekStart: string) {
+  const start = new Date(`${weekStart}T00:00:00.000Z`).getTime();
+  const end = start + 7 * 24 * 60 * 60 * 1000;
+  const weekSessions = sessions.filter(session => session.createdAt.getTime() >= start && session.createdAt.getTime() < end);
+  return { sessionsCompleted: weekSessions.length, minutesRead: Math.round(weekSessions.reduce((total, session) => total + session.durationSeconds, 0) / 60) };
 }
 
 export async function addLearnerToTeacherClass(input: { teacherUserId: number; classId: number; displayName: string; bookBand: string; familyCode: string }) {
@@ -491,11 +525,14 @@ export async function getTeacherDashboard(teacherUserId: number) {
   const profileIds = enrolled.map(row => row.childProfileId);
   const sessions = profileIds.length ? await db.select().from(readingSessions).where(inArray(readingSessions.childProfileId, profileIds)).orderBy(desc(readingSessions.createdAt)) : [];
   const settingsRows = profileIds.length ? await db.select().from(learnerReadingSettings).where(inArray(learnerReadingSettings.childProfileId, profileIds)) : [];
+  const weekStart = currentWeekStart();
+  const goalRows = profileIds.length ? await db.select().from(weeklyReadingGoals).where(and(eq(weeklyReadingGoals.teacherUserId, teacherUserId), inArray(weeklyReadingGoals.childProfileId, profileIds))) : [];
   const pupils = enrolled.map(pupil => {
     const pupilSessions = sessions.filter(session => session.childProfileId === pupil.childProfileId);
     const count = pupilSessions.length || 1;
     const settings = settingsRows.find(item => item.childProfileId === pupil.childProfileId) ?? defaultLearnerSettings(pupil.childProfileId);
-    return { ...pupil, className: classes.find(readerClass => readerClass.id === pupil.classId)?.name ?? "Class", sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count), settings };
+    const weeklyGoal = goalRows.find(goal => goal.childProfileId === pupil.childProfileId && goal.weekStart === weekStart);
+    return { ...pupil, className: classes.find(readerClass => readerClass.id === pupil.classId)?.name ?? "Class", sessionCount: pupilSessions.length, accuracy: Math.round(pupilSessions.reduce((sum, session) => sum + session.accuracy, 0) / count), wcpm: Math.round(pupilSessions.reduce((sum, session) => sum + session.wordsCorrectPerMinute, 0) / count), settings, weeklyGoal, weeklyGoalProgress: weeklyGoal ? summariseWeeklyGoalProgress(pupilSessions, weeklyGoal.weekStart) : undefined };
   });
   const classSummaries = classes.map(readerClass => {
     const classPupils = pupils.filter(pupil => pupil.classId === readerClass.id);
@@ -509,7 +546,7 @@ export async function getTeacherDashboard(teacherUserId: number) {
   const comments = await getSessionComments(sessions.map(session => session.id));
   const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
   const approvedIrishVariants = await db.select().from(educatorApprovedIrishVariants).where(inArray(educatorApprovedIrishVariants.classId, classIds)).orderBy(desc(educatorApprovedIrishVariants.updatedAt));
-  return { classes: classSummaries, pupils, needsReview, provisionalMatches: await listTeacherProvisionalMatches(teacherUserId), approvedIrishVariants, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  return { classes: classSummaries, pupils, needsReview, provisionalMatches: await listTeacherProvisionalMatches(teacherUserId), approvedIrishVariants, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), termPresets, weeklyGoals: goalRows, weekStart, branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
 export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number, range?: TrendDateRange) {

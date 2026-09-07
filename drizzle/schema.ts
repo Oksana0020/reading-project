@@ -80,6 +80,19 @@ export const learnerReadingSettings = mysqlTable("learnerReadingSettings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+/** A teacher-owned weekly reading target for one learner. Progress is derived from saved sessions. */
+export const weeklyReadingGoals = mysqlTable("weeklyReadingGoals", {
+  id: int("id").autoincrement().primaryKey(),
+  teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  childProfileId: int("childProfileId").notNull().references(() => childProfiles.id, { onDelete: "cascade" }),
+  weekStart: varchar("weekStart", { length: 10 }).notNull(),
+  targetMinutes: int("targetMinutes").notNull().default(20),
+  targetSessions: int("targetSessions").notNull().default(3),
+  note: varchar("note", { length: 240 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [unique("teacher_child_week_goal_unique").on(table.teacherUserId, table.childProfileId, table.weekStart)]);
+
 export const classEnrollments = mysqlTable("classEnrollments", {
   id: int("id").autoincrement().primaryKey(),
   classId: int("classId").notNull().references(() => readerClasses.id, { onDelete: "cascade" }),
