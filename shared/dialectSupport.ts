@@ -6,7 +6,7 @@ export const readingLanguageSupportLabels: Record<ReadingLanguageSupport, string
   IRISH_ENGLISH_SUPPORT: "Irish English support · teacher review",
 };
 
-const normalise = (word: string) => word.toLocaleLowerCase("en-IE").replace(/[^a-z']/g, "");
+export const normaliseIrishReadingWord = (word: string) => word.toLocaleLowerCase("en-IE").replace(/[^a-z']/g, "");
 
 /**
  * A deliberately small, review-led Irish English tolerance list.
@@ -38,14 +38,17 @@ const irishEnglishReviewedVariants: Record<string, readonly string[]> = {
   with: ["wit"],
 };
 
-export type DialectMatch = { matches: boolean; provisionalIrishEnglish: boolean };
+export type EducatorApprovedIrishVariant = { expectedWord: string; recognisedVariant: string };
+export type DialectMatch = { matches: boolean; provisionalIrishEnglish: boolean; source?: "built_in" | "educator_approved" };
 
-export function matchExpectedReadingWord(expectedWord: string, recognisedWord: string, support: ReadingLanguageSupport = "STANDARD_ENGLISH"): DialectMatch {
-  const expected = normalise(expectedWord);
-  const recognised = normalise(recognisedWord);
+export function matchExpectedReadingWord(expectedWord: string, recognisedWord: string, support: ReadingLanguageSupport = "STANDARD_ENGLISH", educatorApprovedVariants: EducatorApprovedIrishVariant[] = []): DialectMatch {
+  const expected = normaliseIrishReadingWord(expectedWord);
+  const recognised = normaliseIrishReadingWord(recognisedWord);
   if (expected === recognised) return { matches: true, provisionalIrishEnglish: false };
-  const permitted = support === "IRISH_ENGLISH_SUPPORT" && Boolean(expected) && irishEnglishReviewedVariants[expected]?.includes(recognised);
-  return { matches: permitted, provisionalIrishEnglish: permitted };
+  if (support !== "IRISH_ENGLISH_SUPPORT" || !expected) return { matches: false, provisionalIrishEnglish: false };
+  const educatorApproved = educatorApprovedVariants.some(variant => normaliseIrishReadingWord(variant.expectedWord) === expected && normaliseIrishReadingWord(variant.recognisedVariant) === recognised);
+  if (educatorApproved) return { matches: true, provisionalIrishEnglish: true, source: "educator_approved" };
+  return irishEnglishReviewedVariants[expected]?.includes(recognised) ? { matches: true, provisionalIrishEnglish: true, source: "built_in" } : { matches: false, provisionalIrishEnglish: false };
 }
 
 export function isIrishEnglishSupportEnabled(support: ReadingLanguageSupport) {

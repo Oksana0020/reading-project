@@ -10,8 +10,11 @@ import { scoreQuiz } from "../quizPolicy";
 import { createBrandedPdfReport } from "../pdfReports";
 import {
   approveExercises,
+  approveIrishVariantForClass,
   addLearnerToTeacherClass,
   addLearnersToTeacherClass,
+  confirmProvisionalMatchReview,
+  createProvisionalMatchReviews,
   createAdditionalClassForTeacher,
   createChildProfile,
   createClassForTeacher,
@@ -19,6 +22,7 @@ import {
   enrollChildInClass,
   getChildProfileForUser,
   getChildProgress,
+  getIrishVariantContextForChild,
   getAssignedMaterialForChild,
   getLearnerReadingSettings,
   getParentDashboard,
@@ -27,6 +31,7 @@ import {
   getTeacherMaterialReview,
   getTeacherDashboard,
   getTeacherMonthlyTrendExport,
+  listEducatorApprovedIrishVariants,
   listParentReminders,
   listTeacherTermPresets,
   isTeacher,
@@ -45,14 +50,16 @@ import {
   seedDemoCohort,
   saveReadingSession,
   saveLearnerReadingSettings,
+  saveClassLanguageSupportDefault,
   saveHomePracticeChecklist,
   markParentReminderRead,
   markAllParentRemindersRead,
   saveTeacherTermPreset,
   deleteTeacherTermPreset,
+  deleteEducatorApprovedIrishVariant,
   setUserRole,
 } from "../readerDb";
-import { storageGet, storagePut, storageGetSignedUrl } from "../storage";
+import { storageGet, storagePut } from "../storage";
 import { buildWordTimings } from "../wordTiming";
 import { createMonthlyTrendCsv, monthlyTrendFilename } from "../trendExport";
 
@@ -205,17 +212,21 @@ export const readerLeaderRouter = router({
       if (bytes.byteLength === 0 || bytes.byteLength > 4_500_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Keep this practice recording under 4.5 MB and try again." });
       const mimeType = input.audioMime?.startsWith("audio/") ? input.audioMime : "audio/webm";
       const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("wav") ? "wav" : "webm";
-      const stored = await storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType);
-      const learnerSettings = await getLearnerReadingSettings(input.childProfileId);
+      const [learnerSettings, irishVariantContext] = await Promise.all([getLearnerReadingSettings(input.childProfileId), getIrishVariantContextForChild(input.childProfileId)]);
       const transcriptionPrompt = learnerSettings.languageSupport === "IRISH_ENGLISH_SUPPORT"
         ? "Transcribe a child reading aloud in Irish English. Preserve the words as spoken, including regional pronunciation. Do not correct mistakes or convert dialect features."
         : "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes.";
-      const transcription = await (await import("../_core/voiceTranscription")).transcribeAudio({ audioUrl: await storageGetSignedUrl(stored.key), language: "en", prompt: transcriptionPrompt });
+      const { transcribeAudioBytes } = await import("../_core/voiceTranscription");
+      const [stored, transcription] = await Promise.all([
+        storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType),
+        transcribeAudioBytes({ audioBuffer: bytes, mimeType, language: "en", prompt: transcriptionPrompt }),
+      ]);
       if ("error" in transcription) throw new Error(transcription.error);
-      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport);
+      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport, irishVariantContext.variants);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.eventType === "dialect_variation" ? "Irish English variation provisionally accepted — please confirm this reading moment from the saved audio." : event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
       const wordTimings = buildWordTimings(transcription.text, analysis.durationSeconds, transcription.segments);
       const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, languageSupport: learnerSettings.languageSupport, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates, wordTimings });
+      await createProvisionalMatchReviews({ sessionId: session.id, childProfileId: input.childProfileId, classId: irishVariantContext.classId, matches: analysis.events.filter(event => event.provisionalIrishEnglish && event.recognisedWord).map(event => ({ expectedWord: event.expectedWord, recognisedWord: event.recognisedWord!, source: event.variantSource })) });
       return { session, analysis };
     }),
     save: protectedProcedure.input(z.object({
@@ -231,8 +242,8 @@ export const readerLeaderRouter = router({
     })).mutation(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);
       if (!allowed || ctx.user.role !== "child") throw new TRPCError({ code: "FORBIDDEN", message: "Only the signed-in child can save this reading session." });
-      const learnerSettings = await getLearnerReadingSettings(input.childProfileId);
-      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport);
+      const [learnerSettings, irishVariantContext] = await Promise.all([getLearnerReadingSettings(input.childProfileId), getIrishVariantContextForChild(input.childProfileId)]);
+      const analysis = analyseReadingText(input.expectedText, input.transcript, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport, irishVariantContext.variants);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => {
         const action: "prompt" | "model" | "stay_silent" | "teacher_review" = event.action === "teacher_review"
           ? "teacher_review"
@@ -247,6 +258,7 @@ export const readerLeaderRouter = router({
       });
       const wordTimings = buildWordTimings(analysis.transcript, analysis.durationSeconds);
       const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, assessmentMode: input.assessmentMode, languageSupport: learnerSettings.languageSupport, practiceWords: analysis.practiceWords, interventions: [...input.demoInterventions, ...interventions], wordStates: analysis.wordStates, wordTimings });
+      await createProvisionalMatchReviews({ sessionId: session.id, childProfileId: input.childProfileId, classId: irishVariantContext.classId, matches: analysis.events.filter(event => event.provisionalIrishEnglish && event.recognisedWord).map(event => ({ expectedWord: event.expectedWord, recognisedWord: event.recognisedWord!, source: event.variantSource })) });
       return { session, analysis };
     }),
     childProgress: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive() })).query(async ({ ctx, input }) => {
@@ -304,6 +316,28 @@ export const readerLeaderRouter = router({
     importLearners: protectedProcedure.input(z.object({ classId: z.number().int().positive(), rows: z.array(z.object({ row: z.number().int().min(2).max(101), displayName: z.string().trim().min(1).max(80), bookBand: z.string().trim().min(2).max(80).optional() })).min(1).max(100) })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
       return addLearnersToTeacherClass({ teacherUserId: ctx.user.id, classId: input.classId, rows: input.rows, createFamilyCode: () => code("FAM") });
+    }),
+    saveLanguageSupportDefault: protectedProcedure.input(z.object({ classId: z.number().int().positive(), languageSupport: languageSupportSchema })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return saveClassLanguageSupportDefault(ctx.user.id, input.classId, input.languageSupport);
+    }),
+  }),
+  irishVariants: router({
+    list: protectedProcedure.input(z.object({ classId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return listEducatorApprovedIrishVariants(ctx.user.id, input.classId);
+    }),
+    approve: protectedProcedure.input(z.object({ classId: z.number().int().positive(), expectedWord: z.string().trim().min(1).max(80), recognisedVariant: z.string().trim().min(1).max(80) })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return approveIrishVariantForClass({ teacherUserId: ctx.user.id, ...input });
+    }),
+    remove: protectedProcedure.input(z.object({ variantId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return deleteEducatorApprovedIrishVariant(ctx.user.id, input.variantId);
+    }),
+    confirmMatch: protectedProcedure.input(z.object({ reviewId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return confirmProvisionalMatchReview(ctx.user.id, input.reviewId);
     }),
   }),
   termPresets: router({

@@ -71,6 +71,20 @@
       "when": 1788564216045,
       "tag": "0009_strange_solo",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1788800123399,
+      "tag": "0010_overjoyed_starbolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1788800185086,
+      "tag": "0011_parched_piledriver",
+      "breakpoints": true
     }
   ]
 }

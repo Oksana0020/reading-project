@@ -1,6 +1,6 @@
 # Reader Leader: Current Functionality Reference for Copilot
 
-> **Reference version:** `1.7.0` · **Status:** current working release · **Updated:** 2026-09-04
+> **Reference version:** `1.8.0` · **Status:** current working release · **Updated:** 2026-09-07
 
 This document is the **current functional inventory** of Reader Leader. It is intended to help a copilot, engineer, product owner, or reviewer understand what is implemented, which role may use each capability, and the key boundaries that must be preserved when extending the system.
 
@@ -26,7 +26,7 @@ Children open a personalised **Reading Library** labelled with their own name, s
 
 ### Live read-aloud canvas
 
-The reading canvas presents a focused passage view with punctuation-aware word spacing, a visible reading-mode badge, recording controls, pause/restart actions, word-state rendering, and a completion path. The browser can provide a live speech preview while a session is in progress. Completed recordings are saved and sent through the configured server-side speech transcription flow, which is used to create a stored transcript and supportive reading signals.
+The reading canvas presents a focused passage view with punctuation-aware word spacing, a visible reading-mode badge, recording controls, pause/restart actions, word-state rendering, and a completion path. The browser can provide a live speech preview while a session is in progress. Interim updates are coalesced and supported continuous recognition restarts safely, reducing avoidable interface delay. Completed recording storage and server transcription begin concurrently, avoiding the former serial upload/download round trip; detailed transcription still completes after the child finishes reading.
 
 > **ASR boundary:** This is a prototype support tool, not a production-grade child speech-recognition or diagnostic assessment system. Adults should review low-confidence reading moments with the child and use their professional judgement.
 
@@ -59,7 +59,9 @@ The teacher dashboard is a role-scoped workspace for reviewing learners, classes
 | Create class | Creates a teacher-owned class from a supplied class name. |
 | Class selector | Switches between all classes and a specific class roster. |
 | Join/share code | Shows the selected class code for matching a child’s profile to the teacher’s class. |
-| Create one learner | Adds a learner with name and book band, creates a private family connection code, and provides a default reading plan. |
+| Create one learner | Adds a learner with name and book band, creates a private family connection code, and provides a default reading plan. The plan inherits the selected class language-support default. |
+| Class language-support default | A teacher can choose Standard English comparison or Irish English support for a class. The setting affects learners added afterwards; it never silently overwrites an existing learner’s plan. |
+| Educator-approved Irish variants | A teacher can add or remove a normalised expected-word/recognised-form pair for the selected class after listening to a reading moment. A duplicate pair safely refreshes rather than creating a second entry. |
 | Bulk learner CSV import | Imports up to **100** learners into the currently selected class. |
 | MIS column mapping | Teachers can upload a standard school MIS CSV, inspect its headings, map a learner-name column, and optionally map a reading-level/book-band column before import. Common headings such as `Student Name`, `Pupil Name`, `Full Name`, `Reading Level`, and `Year Group` are suggested automatically. |
 | CSV validation | Empty/invalid rows are reported, duplicate names in the file are reported by row, and duplicate learners are not created. Valid rows are retained even when other rows need attention. |
@@ -73,12 +75,14 @@ For each learner in scope, a teacher can choose a default reading mode—Assiste
 
 ### Irish English variation support
 
-Teachers can select either **Standard English comparison** or **Irish English support · teacher review** for each learner. The Irish English option sends an `en-IE`-appropriate preservation prompt to server-side transcription, applies a deliberately bounded list of reviewed transcript variants in live and saved analysis, and records a supported variation as a **provisional teacher-review moment** rather than a child error. It is not a dialect classifier, an accent diagnosis, or a phoneme-level assessment. The design recognises that Irish English has systematic pronunciation differences, including rhoticity and vowel-system variation, while avoiding automatic conclusions about an individual child’s voice. [1]
+Teachers can select either **Standard English comparison** or **Irish English support · teacher review** for each learner. New learners can inherit this preference from the class language-support default, but teachers retain individual control. The Irish English option sends an `en-IE`-appropriate preservation prompt to server-side transcription, applies a deliberately bounded list of built-in and class-approved transcript variants in live and saved analysis, and records a supported variation as a **provisional teacher-review moment** rather than a child error. It is not a dialect classifier, an accent diagnosis, or a phoneme-level assessment. The design recognises that Irish English has systematic pronunciation differences, including rhoticity and vowel-system variation, while avoiding automatic conclusions about an individual child’s voice. [1]
 
 | Support state | Reading-analysis behaviour | Adult safeguard |
 | --- | --- | --- |
 | **Standard English comparison** | Uses the ordinary expected-word comparison. | Existing low-confidence and assessment-mode review behaviours remain active. |
 | **Irish English support · teacher review** | Select reviewed transcript variants can be provisionally accepted rather than coloured as an immediate child mistake. | Every provisional match is retained as an authorised teacher-review item; teachers can use saved-session playback to listen before responding. |
+
+> **Educator approval flow:** A teacher selects the class, listens to the relevant saved reading moment, and may enter a normalised expected word and recognised form. An approved pair becomes class-specific context for future opt-in Irish English comparisons. For each pending provisional match in **Irish English review**, the teacher can choose **Confirm variation**. Confirmation records the educator decision, promotes the pair to the class lexicon if needed, and removes the item from the pending queue. Teacher-approved variants take precedence in the recorded provenance over a matching built-in variation.
 
 > **Important limitation:** Real recording timing remains transcription-segment-derived and approximate. The support option does not guarantee correct recognition of all Irish English dialects, does not replace teacher judgement, and must not be presented as diagnostic child-speech recognition.
 
@@ -111,7 +115,7 @@ Teachers can view monthly assessment **Story Match %** and **WCPM** together on 
 
 ### Session review, audio, feedback, and running records
 
-Teachers can review saved reading sessions, relevant flags, transcript outcomes, and individual learner metrics. They can listen to an authorised full saved recording, download a PDF running record, and leave kind, specific feedback on individual session reports.
+Teachers can review saved reading sessions, relevant flags, transcript outcomes, and individual learner metrics. They can listen to an authorised full saved recording, download a PDF running record, and leave kind, specific feedback on individual session reports. The **Irish English review** panel lists only provisional matches from authorised classes and exposes a per-match confirmation action, never an automatic approval.
 
 For recordings with saved timing metadata, a teacher can open **word-linked playback** and click a transcript word to seek to its audio moment. The player uses an inspectable authorised audio element, seeks to the word start, and plays a short word window. Real-recording word timing is approximate because it is derived from transcription segments; the technical demo fixture is clearly labelled non-speech audio and demonstrates exact seek/stop behaviour.
 
@@ -177,6 +181,9 @@ The parent dashboard provides an interactive three-step daily home-practice chec
 9. Use UTC-based timestamps internally and localise only for display.
 10. Do not fabricate reviews, ratings, testimonials, or learner outcomes.
 11. Do not represent the Irish English support profile as comprehensive dialect recognition, accent classification, or a clinical/educational diagnosis. Keep provisional matches available for teacher listening and review.
+12. Apply class language-support defaults only when creating learner plans. Existing learner preferences must remain explicit and unchanged until a teacher saves a new individual plan.
+13. Treat educator-approved word pairs as class-scoped, teacher-authored review context. Preserve their provenance, protect them with teacher ownership checks, and require a teacher confirmation for each provisional saved-session event.
+14. Explain recognition responsiveness honestly: browser live preview depends on browser/connection behaviour and detailed server transcription occurs after completion. Avoid promising a fixed response time.
 
 ## 8. Current routes and workflow destinations
 
@@ -196,7 +203,8 @@ The system uses typed tRPC procedures under `readerLeader`. The client should co
 | `materials` | `extractUpload`, `listMine`, `review`, `create`, `generateExercises`, `approve`, `assignedForMe` | Lets teachers manage reading materials and reviewed exercises, while children retrieve assigned passages. |
 | `sessions` | `processAndSave`, `save`, `childProgress`, `audioUrl`, `comments`, `addComment` | Stores/read-outs reading sessions, runs ASR-supported analysis, returns authorised audio URLs, and supports teacher feedback. |
 | `learners` | `settings`, `saveSettings` | Reads or saves one learner’s teacher-configured default mode, target WCPM, and optional Irish English support profile. |
-| `classes` | `create`, `addLearner`, `importLearners` | Manages teacher-owned classes and securely adds one or many learner records to the selected class. |
+| `classes` | `create`, `addLearner`, `importLearners`, `saveLanguageSupportDefault` | Manages teacher-owned classes, securely adds one or many learner records, and saves a language-support default for learners added later. |
+| `irishVariants` | `list`, `approve`, `remove`, `confirmMatch` | Lets an authorised teacher maintain class-scoped reviewed word pairs and confirm a provisional saved-session variation after review. |
 | `termPresets` | `list`, `save`, `remove` | Persists teacher-owned named reporting windows with validated inclusive dates. |
 | `reports` | `monthlyTrend`, `monthlyTrendCsv`, `download`, `downloadPdf` | Produces teacher trend data/CSV exports and audience-specific reading reports with ownership checks. |
 | `homePractice` | `saveChecklist`, `reminders`, `markReminderRead`, `markAllRemindersRead` | Saves a parent’s daily checklist, returns linked-child/date-filtered history, and updates reminder read states. |
@@ -228,13 +236,14 @@ The Teacher Dashboard includes an interactive three-step onboarding guide direct
 | `1.4.0` | `b40cab59` | Multi-learner class management, class trend CSV export, and persistent parent reminders. |
 | `1.5.0` | `817a196c` | Bulk CSV learner import, custom term date filters, unread badges, and mark-all reminder handling. |
 | `1.6.0` | `584821b3` | MIS column mapping, saved named term presets, child/date reminder history filters, interface refinement, and the interactive import onboarding guide. |
-| `1.7.0` | Pending checkpoint | Teacher-configured Irish English support profile, transcription preservation context, bounded reviewed-variation matching, provisional teacher-review events, and responsive learner-plan controls. |
+| `1.7.0` | `8b9a1384` | Teacher-configured Irish English support profile, transcription preservation context, bounded reviewed-variation matching, provisional teacher-review events, and responsive learner-plan controls. |
+| `1.8.0` | Pending checkpoint | Educator-approved class lexicons, per-match teacher confirmation, class language-support defaults for newly added learners, and lower-latency live/saved recognition processing. |
 
 When a release materially changes functionality, increment the reference version, add a row to this table, update the procedure catalogue if API contracts changed, and revise the validation status below with the new test count and browser checks.
 
 ## 12. Current validation status
 
-The current build has passed TypeScript checking and **46 automated tests across 15 test files**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in variation matching, provisional review actions, live word-state behaviour, and persisted language-support settings. Authenticated browser validation has covered the role portal, child reading flows, teacher MIS mapping/import/onboarding/term-preset controls, CSV download, the saved Irish English support plan, parent reminder filters, badge and mark-all controls, and responsive mobile/tablet layouts.
+The current build has passed TypeScript checking and **48 automated tests across 16 test files**. Automated coverage includes reader state/mode logic, exercise safety, document extraction, reports, audio timing, trend export, template and mapped-MIS CSV parsing, saved term presets, protected data access, class roster creation, bulk import behaviour including existing-roster duplicate protection, checklist/reminder persistence, child/date history filters, Irish English opt-in matching, educator-approved variant provenance, class-default inheritance, provisional review persistence, teacher confirmation, live word-state behaviour, and persisted language-support settings. Authenticated browser validation has covered the role portal, child reading flows, teacher MIS mapping/import/onboarding/term-preset controls, CSV download, the saved Irish English support plan, class default and variant approval controls, parent reminder filters, badge and mark-all controls, and responsive mobile/tablet layouts.
 
 ## References
 

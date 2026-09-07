@@ -25,8 +25,20 @@ export const readerClasses = mysqlTable("readerClasses", {
   teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: varchar("name", { length: 120 }).notNull(),
   joinCode: varchar("joinCode", { length: 12 }).notNull().unique(),
+  defaultLanguageSupport: mysqlEnum("defaultLanguageSupport", readingLanguageSupportValues).notNull().default("STANDARD_ENGLISH"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+/** Teacher-approved transcript variants apply to one of their Irish English-enabled classes. */
+export const educatorApprovedIrishVariants = mysqlTable("educatorApprovedIrishVariants", {
+  id: int("id").autoincrement().primaryKey(),
+  teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  classId: int("classId").notNull().references(() => readerClasses.id, { onDelete: "cascade" }),
+  expectedWord: varchar("expectedWord", { length: 80 }).notNull(),
+  recognisedVariant: varchar("recognisedVariant", { length: 80 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [unique("approved_irish_variant_unique").on(table.classId, table.expectedWord, table.recognisedVariant)]);
 
 /** A reusable, teacher-owned assessment-reporting range. Dates are stored as ISO calendar days. */
 export const teacherTermPresets = mysqlTable("teacherTermPresets", {
@@ -159,6 +171,21 @@ export const readingSessions = mysqlTable("readingSessions", {
   interventions: json("interventions").$type<StoredIntervention[]>().notNull(),
   wordStates: json("wordStates").$type<StoredWordState[]>().notNull(),
   wordTimings: json("wordTimings").$type<StoredWordTiming[]>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+/** Each Irish English provisional transcript match remains confirmable by an authorised teacher. */
+export const provisionalMatchReviews = mysqlTable("provisionalMatchReviews", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionId: int("sessionId").notNull().references(() => readingSessions.id, { onDelete: "cascade" }),
+  childProfileId: int("childProfileId").notNull().references(() => childProfiles.id, { onDelete: "cascade" }),
+  classId: int("classId").references(() => readerClasses.id, { onDelete: "set null" }),
+  expectedWord: varchar("expectedWord", { length: 80 }).notNull(),
+  recognisedWord: varchar("recognisedWord", { length: 80 }).notNull(),
+  source: mysqlEnum("source", ["built_in", "educator_approved"]).notNull().default("built_in"),
+  status: mysqlEnum("status", ["pending", "confirmed", "dismissed"]).notNull().default("pending"),
+  confirmedByTeacherId: int("confirmedByTeacherId").references(() => users.id, { onDelete: "set null" }),
+  confirmedAt: timestamp("confirmedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

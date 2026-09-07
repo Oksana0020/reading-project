@@ -3,11 +3,13 @@ import {
   AccountRole,
   childProfiles,
   classEnrollments,
+  educatorApprovedIrishVariants,
   familyLinks,
   homePracticeChecklists,
   learnerReadingSettings,
   materialAssignments,
   parentReminders,
+  provisionalMatchReviews,
   readerClasses,
   readingExercises,
   readingMaterials,
@@ -30,6 +32,7 @@ import { storagePut } from "./storage";
 import { buildMonthlyAssessmentTrend, isValidTrendDateRange, minutesReadThisWeek, type TrendDateRange } from "./learningAnalytics";
 import { createDemoPlaybackTone } from "./demoPlaybackFixture";
 import { isPracticeChecklistComplete, normalisePracticeSteps, practiceChecklistDate } from "./homePractice";
+import { normaliseIrishReadingWord, type EducatorApprovedIrishVariant } from "../shared/dialectSupport";
 
 export type AuthenticatedReader = { id: number; role: AccountRole };
 
@@ -69,7 +72,7 @@ export async function createChildProfile(userId: number, displayName: string, fa
   return profile;
 }
 
-const defaultLearnerSettings = (childProfileId: number) => ({ childProfileId, defaultReadingMode: "ASSISTED_PRACTICE" as AssessmentMode, targetWcpm: 100, languageSupport: "STANDARD_ENGLISH" as ReadingLanguageSupport });
+const defaultLearnerSettings = (childProfileId: number, languageSupport: ReadingLanguageSupport = "STANDARD_ENGLISH") => ({ childProfileId, defaultReadingMode: "ASSISTED_PRACTICE" as AssessmentMode, targetWcpm: 100, languageSupport });
 
 export async function getLearnerReadingSettings(childProfileId: number) {
   const db = await requireDb();
@@ -99,6 +102,16 @@ export async function createAdditionalClassForTeacher(teacherUserId: number, nam
   const [readerClass] = await db.select().from(readerClasses).where(eq(readerClasses.joinCode, joinCode)).limit(1);
   if (!readerClass) throw new Error("Could not create the new class.");
   return readerClass;
+}
+
+export async function saveClassLanguageSupportDefault(teacherUserId: number, classId: number, defaultLanguageSupport: ReadingLanguageSupport) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, classId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  await db.update(readerClasses).set({ defaultLanguageSupport }).where(eq(readerClasses.id, classId));
+  const [updated] = await db.select().from(readerClasses).where(eq(readerClasses.id, classId)).limit(1);
+  if (!updated) throw new Error("Could not save the class language-support default.");
+  return updated;
 }
 
 export type TeacherTermPresetInput = { name: string; startDate: string; endDate: string };
@@ -137,8 +150,42 @@ export async function addLearnerToTeacherClass(input: { teacherUserId: number; c
   const [profile] = await db.select().from(childProfiles).where(eq(childProfiles.userId, learnerUser.id)).limit(1);
   if (!profile) throw new Error("Could not create the learner profile.");
   await db.insert(classEnrollments).values({ classId: readerClass.id, childProfileId: profile.id });
-  await db.insert(learnerReadingSettings).values(defaultLearnerSettings(profile.id)).onDuplicateKeyUpdate({ set: { childProfileId: profile.id } });
+  await db.insert(learnerReadingSettings).values(defaultLearnerSettings(profile.id, readerClass.defaultLanguageSupport)).onDuplicateKeyUpdate({ set: { childProfileId: profile.id } });
   return { readerClass, profile };
+}
+
+export async function listEducatorApprovedIrishVariants(teacherUserId: number, classId: number) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, classId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  return db.select().from(educatorApprovedIrishVariants).where(eq(educatorApprovedIrishVariants.classId, classId)).orderBy(desc(educatorApprovedIrishVariants.updatedAt));
+}
+
+export async function approveIrishVariantForClass(input: { teacherUserId: number; classId: number; expectedWord: string; recognisedVariant: string }) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, input.classId), eq(readerClasses.teacherUserId, input.teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  const expectedWord = normaliseIrishReadingWord(input.expectedWord);
+  const recognisedVariant = normaliseIrishReadingWord(input.recognisedVariant);
+  if (!expectedWord || !recognisedVariant || expectedWord === recognisedVariant) throw new Error("Add two different word forms to approve a regional variation.");
+  await db.insert(educatorApprovedIrishVariants).values({ teacherUserId: input.teacherUserId, classId: input.classId, expectedWord, recognisedVariant }).onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
+  const [approved] = await db.select().from(educatorApprovedIrishVariants).where(and(eq(educatorApprovedIrishVariants.classId, input.classId), eq(educatorApprovedIrishVariants.expectedWord, expectedWord), eq(educatorApprovedIrishVariants.recognisedVariant, recognisedVariant))).limit(1);
+  if (!approved) throw new Error("Could not approve this Irish English variation.");
+  return approved;
+}
+
+export async function deleteEducatorApprovedIrishVariant(teacherUserId: number, variantId: number) {
+  const db = await requireDb();
+  await db.delete(educatorApprovedIrishVariants).where(and(eq(educatorApprovedIrishVariants.id, variantId), eq(educatorApprovedIrishVariants.teacherUserId, teacherUserId)));
+  return { success: true } as const;
+}
+
+export async function getIrishVariantContextForChild(childProfileId: number): Promise<{ classId?: number; variants: EducatorApprovedIrishVariant[] }> {
+  const db = await requireDb();
+  const [enrolment] = await db.select({ classId: classEnrollments.classId }).from(classEnrollments).where(eq(classEnrollments.childProfileId, childProfileId)).limit(1);
+  if (!enrolment) return { variants: [] };
+  const variants = await db.select({ expectedWord: educatorApprovedIrishVariants.expectedWord, recognisedVariant: educatorApprovedIrishVariants.recognisedVariant }).from(educatorApprovedIrishVariants).where(eq(educatorApprovedIrishVariants.classId, enrolment.classId));
+  return { classId: enrolment.classId, variants };
 }
 
 export async function addLearnersToTeacherClass(input: { teacherUserId: number; classId: number; rows: { row: number; displayName: string; bookBand?: string }[]; createFamilyCode: () => string }) {
@@ -297,6 +344,37 @@ export async function getSessionById(sessionId: number) {
   return session;
 }
 
+export async function createProvisionalMatchReviews(input: { sessionId: number; childProfileId: number; classId?: number; matches: { expectedWord: string; recognisedWord: string; source?: "built_in" | "educator_approved" }[] }) {
+  if (!input.matches.length) return [];
+  const db = await requireDb();
+  await db.insert(provisionalMatchReviews).values(input.matches.map(match => ({ sessionId: input.sessionId, childProfileId: input.childProfileId, classId: input.classId ?? null, expectedWord: normaliseIrishReadingWord(match.expectedWord), recognisedWord: normaliseIrishReadingWord(match.recognisedWord), source: match.source ?? "built_in" })));
+  return db.select().from(provisionalMatchReviews).where(eq(provisionalMatchReviews.sessionId, input.sessionId)).orderBy(desc(provisionalMatchReviews.id));
+}
+
+export async function listTeacherProvisionalMatches(teacherUserId: number) {
+  const db = await requireDb();
+  const classes = await db.select({ id: readerClasses.id }).from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
+  const classIds = classes.map(readerClass => readerClass.id);
+  if (!classIds.length) return [];
+  return db.select({ id: provisionalMatchReviews.id, sessionId: provisionalMatchReviews.sessionId, childProfileId: provisionalMatchReviews.childProfileId, classId: provisionalMatchReviews.classId, expectedWord: provisionalMatchReviews.expectedWord, recognisedWord: provisionalMatchReviews.recognisedWord, source: provisionalMatchReviews.source, status: provisionalMatchReviews.status, storyTitle: readingSessions.storyTitle, childName: childProfiles.displayName }).from(provisionalMatchReviews)
+    .innerJoin(readingSessions, eq(provisionalMatchReviews.sessionId, readingSessions.id))
+    .innerJoin(childProfiles, eq(provisionalMatchReviews.childProfileId, childProfiles.id))
+    .where(and(inArray(provisionalMatchReviews.classId, classIds), eq(provisionalMatchReviews.status, "pending")))
+    .orderBy(desc(provisionalMatchReviews.createdAt));
+}
+
+export async function confirmProvisionalMatchReview(teacherUserId: number, reviewId: number) {
+  const db = await requireDb();
+  const [review] = await db.select().from(provisionalMatchReviews).where(eq(provisionalMatchReviews.id, reviewId)).limit(1);
+  if (!review?.classId) throw new Error("This provisional reading moment is not available to your class.");
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, review.classId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This provisional reading moment is not available to your class.");
+  if (review.status === "dismissed") throw new Error("This review was already dismissed.");
+  const variant = await approveIrishVariantForClass({ teacherUserId, classId: readerClass.id, expectedWord: review.expectedWord, recognisedVariant: review.recognisedWord });
+  if (review.status !== "confirmed") await db.update(provisionalMatchReviews).set({ status: "confirmed", confirmedByTeacherId: teacherUserId, confirmedAt: new Date() }).where(eq(provisionalMatchReviews.id, review.id));
+  return { reviewId: review.id, variant };
+}
+
 export async function getSessionPlayback(sessionId: number) {
   const session = await getSessionById(sessionId);
   if (!session) return undefined;
@@ -372,6 +450,7 @@ export async function getChildProgress(childProfileId: number) {
     assessmentTrend: buildMonthlyAssessmentTrend(sessions),
     minutesReadThisWeek: minutesReadThisWeek(sessions),
     learnerSettings: await getLearnerReadingSettings(childProfileId),
+    irishVariantContext: await getIrishVariantContextForChild(childProfileId),
     summary: { sessionsCompleted: sessions.length, averageAccuracy, averageWcpm, practiceWords },
   };
 }
@@ -380,7 +459,7 @@ export async function getTeacherDashboard(teacherUserId: number) {
   const db = await requireDb();
   const classes = await db.select().from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
   const termPresets = await listTeacherTermPresets(teacherUserId);
-  if (!classes.length) return { classes: [], pupils: [], needsReview: [], materials: [], recentSessions: [], classAssessmentTrend: [], termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  if (!classes.length) return { classes: [], pupils: [], needsReview: [], provisionalMatches: [], approvedIrishVariants: [], materials: [], recentSessions: [], classAssessmentTrend: [], termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
   const classIds = classes.map(readerClass => readerClass.id);
   const enrolled = await db.select({ childProfileId: classEnrollments.childProfileId, classId: classEnrollments.classId, displayName: childProfiles.displayName, bookBand: childProfiles.bookBand })
     .from(classEnrollments).innerJoin(childProfiles, eq(classEnrollments.childProfileId, childProfiles.id)).where(inArray(classEnrollments.classId, classIds));
@@ -404,7 +483,8 @@ export async function getTeacherDashboard(teacherUserId: number) {
   const materials = await listTeacherMaterials(teacherUserId);
   const comments = await getSessionComments(sessions.map(session => session.id));
   const recentSessions = sessions.slice(0, 8).map(session => ({ ...session, childName: enrolled.find(pupil => pupil.childProfileId === session.childProfileId)?.displayName ?? "Reader", comments: comments.filter(comment => comment.sessionId === session.id) }));
-  return { classes: classSummaries, pupils, needsReview, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
+  const approvedIrishVariants = await db.select().from(educatorApprovedIrishVariants).where(inArray(educatorApprovedIrishVariants.classId, classIds)).orderBy(desc(educatorApprovedIrishVariants.updatedAt));
+  return { classes: classSummaries, pupils, needsReview, provisionalMatches: await listTeacherProvisionalMatches(teacherUserId), approvedIrishVariants, materials, recentSessions, classAssessmentTrend: buildMonthlyAssessmentTrend(sessions), termPresets, branding: await getSchoolBrandingForTeacher(teacherUserId) };
 }
 
 export async function getTeacherMonthlyTrendExport(teacherUserId: number, classId?: number, range?: TrendDateRange) {

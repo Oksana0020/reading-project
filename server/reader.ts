@@ -1,8 +1,8 @@
 import type { AssessmentMode, StoredWordState } from "../drizzle/schema";
-import { matchExpectedReadingWord, type ReadingLanguageSupport } from "../shared/dialectSupport";
+import { matchExpectedReadingWord, type EducatorApprovedIrishVariant, type ReadingLanguageSupport } from "../shared/dialectSupport";
 
 export type ReadingEventKind = "correct" | "dialect_variation" | "substitution" | "omission" | "insertion" | "repetition";
-export type ReadingEvent = { expectedWord: string; recognisedWord: string | null; eventType: ReadingEventKind; action: "celebrate" | "stay_silent" | "practise_gently" | "teacher_review"; provisionalIrishEnglish?: boolean };
+export type ReadingEvent = { expectedWord: string; recognisedWord: string | null; eventType: ReadingEventKind; action: "celebrate" | "stay_silent" | "practise_gently" | "teacher_review"; provisionalIrishEnglish?: boolean; variantSource?: "built_in" | "educator_approved" };
 export type WordState = StoredWordState;
 
 export type ReadingAnalysis = {
@@ -40,21 +40,21 @@ function mergeAttemptHistory(states: WordState[], attemptedStates: WordState[] |
 }
 
 /** Transparent transcript comparison; it records practice/review signals, not a reading diagnosis. */
-export function analyseReadingText(expectedText: string, transcript: string, durationSeconds: number, mode: AssessmentMode = "ASSISTED_PRACTICE", attemptedStates?: WordState[], languageSupport: ReadingLanguageSupport = "STANDARD_ENGLISH"): ReadingAnalysis {
+export function analyseReadingText(expectedText: string, transcript: string, durationSeconds: number, mode: AssessmentMode = "ASSISTED_PRACTICE", attemptedStates?: WordState[], languageSupport: ReadingLanguageSupport = "STANDARD_ENGLISH", educatorApprovedVariants: EducatorApprovedIrishVariant[] = []): ReadingAnalysis {
   const expected = tokenize(expectedText); const observed = tokenize(transcript); const states = initialiseWordStates(expectedText); const events: ReadingEvent[] = [];
   let expectedIndex = 0; let observedIndex = 0; let correctWords = 0; let firstPassCorrectWords = 0;
   while (expectedIndex < expected.length && observedIndex < observed.length) {
     const target = expected[expectedIndex]; const heard = observed[observedIndex]; const state = states[expectedIndex];
-    const matched = matchExpectedReadingWord(target, heard, languageSupport);
+    const matched = matchExpectedReadingWord(target, heard, languageSupport, educatorApprovedVariants);
     if (matched.matches) {
       state.attempts += 1; state.status = state.status === "incorrect" ? "retried_correct" : "correct"; correctWords += 1;
       if (state.attempts === 1) firstPassCorrectWords += 1;
       const eventType: ReadingEventKind = matched.provisionalIrishEnglish ? "dialect_variation" : "correct";
-      events.push({ expectedWord: target, recognisedWord: heard, eventType, action: eventAction(mode, eventType), provisionalIrishEnglish: matched.provisionalIrishEnglish || undefined }); expectedIndex += 1; observedIndex += 1; continue;
+      events.push({ expectedWord: target, recognisedWord: heard, eventType, action: eventAction(mode, eventType), provisionalIrishEnglish: matched.provisionalIrishEnglish || undefined, variantSource: matched.source }); expectedIndex += 1; observedIndex += 1; continue;
     }
-    if (observedIndex + 1 < observed.length && matchExpectedReadingWord(target, observed[observedIndex + 1], languageSupport).matches) { events.push({ expectedWord: target, recognisedWord: null, eventType: "insertion", action: eventAction(mode, "insertion") }); observedIndex += 1; continue; }
+    if (observedIndex + 1 < observed.length && matchExpectedReadingWord(target, observed[observedIndex + 1], languageSupport, educatorApprovedVariants).matches) { events.push({ expectedWord: target, recognisedWord: null, eventType: "insertion", action: eventAction(mode, "insertion") }); observedIndex += 1; continue; }
     state.attempts += 1; state.status = "incorrect";
-    const kind: ReadingEventKind = expectedIndex + 1 < expected.length && matchExpectedReadingWord(expected[expectedIndex + 1], heard, languageSupport).matches ? "omission" : "substitution";
+    const kind: ReadingEventKind = expectedIndex + 1 < expected.length && matchExpectedReadingWord(expected[expectedIndex + 1], heard, languageSupport, educatorApprovedVariants).matches ? "omission" : "substitution";
     events.push({ expectedWord: target, recognisedWord: kind === "omission" ? null : heard, eventType: kind, action: eventAction(mode, kind) });
     if (kind === "omission") expectedIndex += 1; else { expectedIndex += 1; observedIndex += 1; }
   }

@@ -195,6 +195,32 @@ export async function transcribeAudio(
 }
 
 /**
+ * Transcribes bytes already available on the server. Reader Leader uses this for
+ * a just-completed recording so persistent storage and transcription can begin
+ * in parallel rather than requiring a storage download before analysis.
+ */
+export async function transcribeAudioBytes(options: { audioBuffer: Buffer; mimeType: string; language?: string; prompt?: string }): Promise<TranscriptionResponse | TranscriptionError> {
+  try {
+    if (!ENV.forgeApiUrl || !ENV.forgeApiKey) return { error: "Voice transcription service is not configured", code: "SERVICE_ERROR" };
+    if (!options.audioBuffer.length) return { error: "Audio file is empty", code: "INVALID_FORMAT" };
+    if (options.audioBuffer.length > 16 * 1024 * 1024) return { error: "Audio file exceeds maximum size limit", code: "FILE_TOO_LARGE" };
+    const formData = new FormData();
+    formData.append("file", new Blob([new Uint8Array(options.audioBuffer)], { type: options.mimeType }), `audio.${getFileExtension(options.mimeType)}`);
+    formData.append("model", "whisper-1");
+    formData.append("response_format", "verbose_json");
+    formData.append("prompt", options.prompt || (options.language ? `Transcribe the user's voice to text, the user's working language is ${getLanguageName(options.language)}` : "Transcribe the user's voice to text"));
+    const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
+    const response = await fetch(new URL("v1/audio/transcriptions", baseUrl).toString(), { method: "POST", headers: { authorization: `Bearer ${ENV.forgeApiKey}`, "Accept-Encoding": "identity" }, body: formData });
+    if (!response.ok) return { error: "Transcription service request failed", code: "TRANSCRIPTION_FAILED", details: `${response.status} ${response.statusText}` };
+    const transcription = await response.json() as WhisperResponse;
+    if (!transcription.text || typeof transcription.text !== "string") return { error: "Invalid transcription response", code: "SERVICE_ERROR", details: "Transcription service returned an invalid response format" };
+    return transcription;
+  } catch (error) {
+    return { error: "Voice transcription failed", code: "SERVICE_ERROR", details: error instanceof Error ? error.message : "An unexpected error occurred" };
+  }
+}
+
+/**
  * Helper function to get file extension from MIME type
  */
 function getFileExtension(mimeType: string): string {

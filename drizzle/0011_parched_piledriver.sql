@@ -1,0 +1,2 @@
+ALTER TABLE `provisionalMatchReviews` ADD `classId` int;--> statement-breakpoint
+ALTER TABLE `provisionalMatchReviews` ADD CONSTRAINT `provisionalMatchReviews_classId_readerClasses_id_fk` FOREIGN KEY (`classId`) REFERENCES `readerClasses`(`id`) ON DELETE set null ON UPDATE no action;
