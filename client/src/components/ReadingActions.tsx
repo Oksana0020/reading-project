@@ -33,12 +33,16 @@ function base64ToBytes(base64: string) {
   return bytes;
 }
 
+export function downloadBase64(filename: string, dataBase64: string, mimeType: string) {
+  downloadBytes(filename, base64ToBytes(dataBase64), mimeType);
+}
+
 export function ReportDownloadButton({ childProfileId, audience, label }: { childProfileId: number; audience: Audience; label: string }) {
   const report = trpc.readerLeader.reports.downloadPdf.useQuery({ childProfileId, audience }, { enabled: false, retry: false });
   const download = async () => {
     const result = await report.refetch();
     if (!result.data) return toast(result.error?.message || "Your report could not be prepared.");
-    downloadBytes(result.data.filename, base64ToBytes(result.data.dataBase64), result.data.mimeType);
+    downloadBase64(result.data.filename, result.data.dataBase64, result.data.mimeType);
     toast("Your branded PDF report is downloading.");
   };
   return <button className="report-action" onClick={() => void download()} disabled={report.isFetching}><Download size={15} /> {report.isFetching ? "Preparing…" : label}</button>;

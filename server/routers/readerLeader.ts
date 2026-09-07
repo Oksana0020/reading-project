@@ -8,6 +8,7 @@ import { extractReadingMaterial } from "../documentExtraction";
 import { createReadingReport } from "../readerReports";
 import { scoreQuiz } from "../quizPolicy";
 import { createBrandedPdfReport } from "../pdfReports";
+import { createClassVariationReviewPdf } from "../classVariationReviewReport";
 import {
   approveExercises,
   approveIrishVariantForClass,
@@ -31,9 +32,11 @@ import {
   getTeacherMaterialReview,
   getTeacherDashboard,
   getTeacherIrishVariantExport,
+  getTeacherClassVariationReview,
   getTeacherMonthlyTrendExport,
   listEducatorApprovedIrishVariants,
   listParentReminders,
+  listTeacherProvisionalMatches,
   listTeacherTermPresets,
   isTeacher,
   linkParentToFamily,
@@ -346,6 +349,10 @@ export const readerLeaderRouter = router({
       const exportData = await getTeacherIrishVariantExport(ctx.user.id, input.classId);
       return { filename: irishVariantFilename(exportData.className), csv: createIrishVariantCsv(exportData.className, exportData.variants) };
     }),
+    pendingMatches: protectedProcedure.input(z.object({ classId: z.number().int().positive().optional(), childProfileId: z.number().int().positive().optional(), range: trendDateRangeSchema }).refine(input => !input.range?.startDate || !input.range?.endDate || input.range.startDate <= input.range.endDate, { message: "Choose an end date on or after the start date." })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      return listTeacherProvisionalMatches(ctx.user.id, { classId: input.classId, childProfileId: input.childProfileId, ...input.range });
+    }),
   }),
   termPresets: router({
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -421,6 +428,12 @@ export const readerLeaderRouter = router({
       requireTeacher(ctx.user.role);
       const trend = await getTeacherMonthlyTrendExport(ctx.user.id, input.classId, input.range);
       return { filename: monthlyTrendFilename(trend.className, input.range), csv: createMonthlyTrendCsv(trend.className, trend.points) };
+    }),
+    classVariationReviewPdf: protectedProcedure.input(z.object({ classId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const review = await getTeacherClassVariationReview(ctx.user.id, input.classId);
+      const data = await createClassVariationReviewPdf({ className: review.readerClass.name, branding: review.branding, variants: review.variants, reviews: review.reviews });
+      return { filename: `${review.readerClass.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}-class-variation-review.pdf`, mimeType: "application/pdf", dataBase64: data.toString("base64") };
     }),
     download: protectedProcedure.input(z.object({ childProfileId: z.number().int().positive(), audience: z.enum(["child", "parent", "teacher"]) })).query(async ({ ctx, input }) => {
       const allowed = await mayAccessChildProfile({ id: ctx.user.id, role: ctx.user.role }, input.childProfileId);

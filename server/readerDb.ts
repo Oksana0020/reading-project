@@ -359,15 +359,20 @@ export async function createProvisionalMatchReviews(input: { sessionId: number; 
   return db.select().from(provisionalMatchReviews).where(eq(provisionalMatchReviews.sessionId, input.sessionId)).orderBy(desc(provisionalMatchReviews.id));
 }
 
-export async function listTeacherProvisionalMatches(teacherUserId: number) {
+export async function listTeacherProvisionalMatches(teacherUserId: number, filters: { classId?: number; childProfileId?: number; startDate?: string; endDate?: string } = {}) {
   const db = await requireDb();
   const classes = await db.select({ id: readerClasses.id }).from(readerClasses).where(eq(readerClasses.teacherUserId, teacherUserId));
   const classIds = classes.map(readerClass => readerClass.id);
   if (!classIds.length) return [];
+  if (filters.classId && !classIds.includes(filters.classId)) throw new Error("This class is not available to your account.");
+  const conditions = [inArray(provisionalMatchReviews.classId, filters.classId ? [filters.classId] : classIds), eq(provisionalMatchReviews.status, "pending")];
+  if (filters.childProfileId) conditions.push(eq(provisionalMatchReviews.childProfileId, filters.childProfileId));
+  if (filters.startDate) conditions.push(gte(readingSessions.createdAt, new Date(`${filters.startDate}T00:00:00.000Z`)));
+  if (filters.endDate) conditions.push(lte(readingSessions.createdAt, new Date(`${filters.endDate}T23:59:59.999Z`)));
   return db.select({ id: provisionalMatchReviews.id, sessionId: provisionalMatchReviews.sessionId, childProfileId: provisionalMatchReviews.childProfileId, classId: provisionalMatchReviews.classId, expectedWord: provisionalMatchReviews.expectedWord, recognisedWord: provisionalMatchReviews.recognisedWord, source: provisionalMatchReviews.source, status: provisionalMatchReviews.status, storyTitle: readingSessions.storyTitle, childName: childProfiles.displayName }).from(provisionalMatchReviews)
     .innerJoin(readingSessions, eq(provisionalMatchReviews.sessionId, readingSessions.id))
     .innerJoin(childProfiles, eq(provisionalMatchReviews.childProfileId, childProfiles.id))
-    .where(and(inArray(provisionalMatchReviews.classId, classIds), eq(provisionalMatchReviews.status, "pending")))
+    .where(and(...conditions))
     .orderBy(desc(provisionalMatchReviews.createdAt));
 }
 
@@ -381,6 +386,18 @@ export async function confirmProvisionalMatchReview(teacherUserId: number, revie
   const variant = await approveIrishVariantForClass({ teacherUserId, classId: readerClass.id, expectedWord: review.expectedWord, recognisedVariant: review.recognisedWord });
   if (review.status !== "confirmed") await db.update(provisionalMatchReviews).set({ status: "confirmed", confirmedByTeacherId: teacherUserId, confirmedAt: new Date() }).where(eq(provisionalMatchReviews.id, review.id));
   return { reviewId: review.id, variant };
+}
+
+export async function getTeacherClassVariationReview(teacherUserId: number, classId: number) {
+  const db = await requireDb();
+  const [readerClass] = await db.select().from(readerClasses).where(and(eq(readerClasses.id, classId), eq(readerClasses.teacherUserId, teacherUserId))).limit(1);
+  if (!readerClass) throw new Error("This class is not available to your account.");
+  const [variants, reviews, branding] = await Promise.all([
+    db.select({ expectedWord: educatorApprovedIrishVariants.expectedWord, recognisedVariant: educatorApprovedIrishVariants.recognisedVariant, updatedAt: educatorApprovedIrishVariants.updatedAt }).from(educatorApprovedIrishVariants).where(eq(educatorApprovedIrishVariants.classId, classId)).orderBy(desc(educatorApprovedIrishVariants.updatedAt)),
+    db.select({ childName: childProfiles.displayName, storyTitle: readingSessions.storyTitle, expectedWord: provisionalMatchReviews.expectedWord, recognisedWord: provisionalMatchReviews.recognisedWord, source: provisionalMatchReviews.source, status: provisionalMatchReviews.status, createdAt: provisionalMatchReviews.createdAt, confirmedAt: provisionalMatchReviews.confirmedAt }).from(provisionalMatchReviews).innerJoin(childProfiles, eq(provisionalMatchReviews.childProfileId, childProfiles.id)).innerJoin(readingSessions, eq(provisionalMatchReviews.sessionId, readingSessions.id)).where(eq(provisionalMatchReviews.classId, classId)).orderBy(desc(provisionalMatchReviews.createdAt)).limit(50),
+    getSchoolBrandingForTeacher(teacherUserId),
+  ]);
+  return { readerClass, variants, reviews, branding };
 }
 
 export async function getSessionPlayback(sessionId: number) {

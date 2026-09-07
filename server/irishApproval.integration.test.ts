@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { childProfiles, classEnrollments, educatorApprovedIrishVariants, learnerReadingSettings, provisionalMatchReviews, readerClasses, readingSessions, users } from "../drizzle/schema";
 import { getDb } from "./db";
-import { addLearnerToTeacherClass, approveIrishVariantForClass, confirmProvisionalMatchReview, createAdditionalClassForTeacher, createProvisionalMatchReviews, getLearnerReadingSettings, getTeacherIrishVariantExport, listEducatorApprovedIrishVariants, listTeacherProvisionalMatches, saveClassLanguageSupportDefault, saveReadingSession } from "./readerDb";
+import { addLearnerToTeacherClass, approveIrishVariantForClass, confirmProvisionalMatchReview, createAdditionalClassForTeacher, createProvisionalMatchReviews, getLearnerReadingSettings, getTeacherClassVariationReview, getTeacherIrishVariantExport, listEducatorApprovedIrishVariants, listTeacherProvisionalMatches, saveClassLanguageSupportDefault, saveReadingSession } from "./readerDb";
 
 const databaseAvailable = Boolean(process.env.DATABASE_URL);
 const compactId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
@@ -35,6 +35,8 @@ describe.skipIf(!databaseAvailable)("Irish English educator approval workflow", 
       const session = await saveReadingSession({ childProfileId: learner.profile.id, storyTitle: "Irish reading check", transcript: "tree", accuracy: 100, wordsCorrectPerMinute: 90, durationSeconds: 60, languageSupport: "IRISH_ENGLISH_SUPPORT", practiceWords: [], interventions: [] });
       const [review] = await createProvisionalMatchReviews({ sessionId: session.id, childProfileId: learner.profile.id, classId: readerClass.id, matches: [{ expectedWord: "three", recognisedWord: "tree", source: "educator_approved" }] });
       expect(await listTeacherProvisionalMatches(teacher.id)).toEqual(expect.arrayContaining([expect.objectContaining({ id: review.id, status: "pending", expectedWord: "three" })]));
+      expect(await listTeacherProvisionalMatches(teacher.id, { classId: readerClass.id, childProfileId: learner.profile.id, startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10) })).toEqual(expect.arrayContaining([expect.objectContaining({ id: review.id })]));
+      expect(await getTeacherClassVariationReview(teacher.id, readerClass.id)).toEqual(expect.objectContaining({ readerClass: expect.objectContaining({ id: readerClass.id }), variants: expect.arrayContaining([expect.objectContaining({ expectedWord: "three" })]), reviews: expect.arrayContaining([expect.objectContaining({ expectedWord: "three", status: "pending" })]) }));
       expect((await confirmProvisionalMatchReview(teacher.id, review.id)).reviewId).toBe(review.id);
       expect(await listTeacherProvisionalMatches(teacher.id)).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: review.id })]));
     } finally {

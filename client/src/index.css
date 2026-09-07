@@ -472,3 +472,24 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--yellow); outlin
 .teacher-review-tabs button.active { border-color: var(--ink); background: #fffef9; color: var(--ink); box-shadow: 2px 2px 0 var(--ink); }.teacher-review-tabs button span { display: inline-grid; place-items: center; min-width: 19px; height: 19px; border-radius: 999px; background: #e5edff; color: #1d4ed8; font-family: "DM Mono", monospace; font-size: 10px; }
 @media (max-width: 640px) { .recognition-indicator { margin: 11px 12px 0; align-items: flex-start; }.recognition-indicator .wave { margin-top: 3px; }.teacher-review-tabs { display: grid; grid-template-columns: 1fr; }.teacher-review-tabs button { width: 100%; justify-content: space-between; }.educator-variants .csv-export { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .status-spin { animation: none; } }
+
+/* Workspace navigation, connection diagnostics, and filtered class review */
+.workspace-link { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; }
+.workspace-link small { grid-column: 2; margin-top: 1px; color: #68758e; font-family: "DM Mono", monospace; font-size: 9px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.family-nav .workspace-link { background: #fffaf0; border: 1px solid #f1dfb8; }
+.reading-status-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin: 13px 16px 0; }
+.reading-status-row .recognition-indicator { margin: 0; }
+.connection-indicator { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 12px; background: #fbfcfe; color: #40516d; }
+.connection-indicator > span { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: #e8efff; color: #1d4ed8; }
+.connection-indicator b,.connection-indicator small { display: block; }.connection-indicator b { font-size: 12px; }.connection-indicator small { margin-top: 2px; font-size: 10px; line-height: 1.35; color: #60708b; font-weight: 700; }
+.connection-indicator.good { border-color: #b7dfc7; background: #f2fcf6; }.connection-indicator.good > span { background: #dff6e9; color: #16824a; }
+.connection-indicator.fair { border-color: #e8d49a; background: #fffaf0; }.connection-indicator.fair > span { background: #fff1bd; color: #986400; }
+.connection-indicator.slow,.connection-indicator.offline { border-color: #f1beb8; background: #fff4f2; }.connection-indicator.slow > span,.connection-indicator.offline > span { background: #ffe2de; color: #b74132; }
+.connection-indicator.unknown { background: #f8fafc; }.connection-indicator.unknown > span { background: #edf1f7; color: #52627f; }
+.pending-match-filter-bar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin: 15px 0 17px; padding: 13px; border: 1px solid #d8e1ef; border-radius: 12px; background: #f8fbff; }
+.pending-match-filter-bar label { display: grid; gap: 5px; font-family: "DM Mono", monospace; font-size: 9px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; color: #52627f; }
+.pending-match-filter-bar select,.pending-match-filter-bar input { min-height: 39px; border: 1px solid #b9c8dd; border-radius: 8px; padding: 0 9px; background: #fff; color: var(--ink); font-size: 11px; }
+.pending-match-filter-bar button { min-height: 39px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1.5px solid var(--ink); border-radius: 8px; padding: 0 11px; background: #e7eeff; color: var(--ink); font-size: 10px; font-weight: 900; white-space: nowrap; }
+.pending-match-filter-bar .clear-range { background: #fff; border-color: #c6d1e2; }.pending-match-filter-bar .csv-export { background: #d9f0e5; }
+.review-print-note { margin: -8px 0 16px; color: #5b6a85; font-size: 11px; line-height: 1.4; }
+@media (max-width: 640px) { .reading-status-row { grid-template-columns: 1fr; margin: 11px 12px 0; }.connection-indicator { align-items: flex-start; }.pending-match-filter-bar { display: grid; grid-template-columns: 1fr 1fr; }.pending-match-filter-bar label:first-child,.pending-match-filter-bar .csv-export { grid-column: 1 / -1; }.pending-match-filter-bar button { width: 100%; } }
