@@ -9,6 +9,8 @@ The learner interface separates work into three clear destinations: **My Assignm
 
 The assignment page also makes the learner's next destination unambiguous, separates assigned work from Demos and Resources in the top navigation, and provides concise recovery guidance when an assignment launch or browser state is not ready. These patterns support Reader Leader additions such as a focused warm-up before an assigned story, clear live-reading readiness feedback, and a child-facing non-assessed practice area. No learner names, assignments, performance data, or account content from the reference platform are retained in this document.
 
+The Demos view exposes programme/level libraries rather than three in-session error-handling modes. The visible libraries include Fast ForWord Foundations I and II, Elements I and II, Reading Readiness, Reading Levels 1–3, and Reading Comprehension, with named activities inside each. The active assignment page displayed a ClearFluency library. These programme choices should not be described as equivalent to Reader Leader’s Assisted, Guided, and Monthly modes; they organise activities, while Reader Leader’s modes govern child feedback and progression within one oral-reading session. Demo progress is explicitly not saved or counted.
+
 ## Transferable Reader Leader opportunities
 
 | Observed pattern | Practical Reader Leader adaptation | Safeguard |
