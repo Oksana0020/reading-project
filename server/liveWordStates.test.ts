@@ -27,6 +27,17 @@ describe("live transcript word tracking", () => {
     expect(states[2]).toMatchObject({ text: "softly", status: "correct", attempts: 1 });
   });
 
+  it("lets a child continue naturally after a missed word without replaying matching from the passage beginning", () => {
+    const states = deriveLiveWordStates("Amina carried a lantern", "Amina caried a lantern", "ASSISTED_PRACTICE");
+
+    expect(states.map(state => ({ text: state.text, status: state.status, attempts: state.attempts }))).toEqual([
+      { text: "amina", status: "correct", attempts: 1 },
+      { text: "carried", status: "incorrect", attempts: 1 },
+      { text: "a", status: "correct", attempts: 1 },
+      { text: "lantern", status: "correct", attempts: 1 },
+    ]);
+  });
+
   it("keeps a reviewed Irish English live variant out of the red mismatch state when the profile is enabled", () => {
     const supported = deriveLiveWordStates("The thin path", "The tin pat", "ASSISTED_PRACTICE", "IRISH_ENGLISH_SUPPORT");
     const standard = deriveLiveWordStates("The thin path", "The tin pat", "ASSISTED_PRACTICE", "STANDARD_ENGLISH");

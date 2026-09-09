@@ -28,6 +28,15 @@ export function deriveLiveWordStates(expectedText: string, transcript: string, m
     if (!state) break;
     const heardWord = heardWords[heardIndex];
     const matches = matchExpectedReadingWord(state.text, heardWord, languageSupport, educatorApprovedVariants).matches;
+    const nextState = states[expectedIndex + 1];
+    const followsAnIncorrectWord = mode !== "MONTHLY_ASSESSMENT" && state.status === "incorrect" && nextState && matchExpectedReadingWord(nextState.text, heardWord, languageSupport, educatorApprovedVariants).matches;
+    if (followsAnIncorrectWord) {
+      nextState.attempts += 1;
+      nextState.status = "correct";
+      expectedIndex += 2;
+      heardIndex += 1;
+      continue;
+    }
     state.attempts += 1;
     if (mode === "MONTHLY_ASSESSMENT") {
       state.status = matches ? "correct" : "incorrect";

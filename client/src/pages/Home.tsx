@@ -9,6 +9,7 @@ import { ParentDashboard } from "@/components/ParentDashboard";
 import { trpc } from "@/lib/trpc";
 import { deriveLiveWordStates, firstGuidedModelWord, initialLiveWordStates, type LiveWordState } from "@shared/liveWordStates";
 import { hasChildReadingEvidence } from "@shared/readingEvidence";
+import { appendRecognitionTranscript } from "@shared/recognitionTranscript";
 import type { ReadingLanguageSupport } from "@shared/dialectSupport";
 import { getBrowserConnectionQuality, type ConnectionStatus } from "@shared/connectionQuality";
 import { ArrowLeft, Award, BookOpen, Check, ChevronRight, CirclePause, FileText, Flame, Gauge, Headphones, Home as HomeIcon, LoaderCircle, LogOut, Mic, MicOff, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Square, Star, Trophy, Upload, UsersRound, Volume2, WandSparkles, Wifi, WifiOff, X } from "lucide-react";
@@ -98,6 +99,7 @@ export default function Home() {
   const recognitionDesiredRef = useRef(false);
   const transcriptFrameRef = useRef<number | null>(null);
   const pendingTranscriptRef = useRef("");
+  const liveTranscriptRef = useRef("");
   const lastRecognitionAtRef = useRef(0);
   const guidedModelledWordsRef = useRef(new Set<string>());
 
@@ -170,9 +172,10 @@ export default function Home() {
   const processRecording = trpc.reading.processRecording.useMutation({ onSuccess: data => finishWithReport(data), onError: () => { finishWithGuidedTranscript(); toast("The live transcript was unavailable, so the session used guided practice feedback."); } });
 
   function resetWordStates(story: Story) { guidedModelledWordsRef.current.clear(); setMovedOnAttempts(new Map()); setWordStates(initialLiveWordStates(story.text)); }
-  function launchStory(story: Story) { setSelectedStory(story); setLiveTranscript(""); setReport(null); setSavedSessionId(null); setHasSavedRecording(false); setModelSpeaking(false); setCoachMoment("idle"); setHesitationHint(false); setAssessmentMode(childProgress.data?.learnerSettings?.defaultReadingMode || "ASSISTED_PRACTICE"); resetWordStates(story); setReadingState("ready"); setRecognitionStatus("ready"); setView("reading"); }
+  function clearLiveTranscript() { liveTranscriptRef.current = ""; pendingTranscriptRef.current = ""; setLiveTranscript(""); }
+  function launchStory(story: Story) { setSelectedStory(story); clearLiveTranscript(); setReport(null); setSavedSessionId(null); setHasSavedRecording(false); setModelSpeaking(false); setCoachMoment("idle"); setHesitationHint(false); setAssessmentMode(childProgress.data?.learnerSettings?.defaultReadingMode || "ASSISTED_PRACTICE"); resetWordStates(story); setReadingState("ready"); setRecognitionStatus("ready"); setView("reading"); }
   function chooseStory(story: Story) { setWarmUpStory(story); }
-  function selectAssessmentMode(mode: AssessmentMode) { setAssessmentMode(mode); setLiveTranscript(""); setCoachMoment("idle"); resetWordStates(selectedStory); }
+  function selectAssessmentMode(mode: AssessmentMode) { setAssessmentMode(mode); clearLiveTranscript(); setCoachMoment("idle"); resetWordStates(selectedStory); }
   function recordWordAttempt(correct: boolean) {
     const target = wordStates.find(state => state.status === "current") ?? wordStates.find(state => state.status === "incorrect");
     if (!target) return;
@@ -207,26 +210,29 @@ export default function Home() {
     if (!playSpeech(text, () => setModelSpeaking(true), () => setModelSpeaking(false))) setModelSpeaking(false);
   }
   function cleanupRecording() { recognitionDesiredRef.current = false; recognitionRef.current?.stop?.(); recognitionRef.current = null; if (transcriptFrameRef.current !== null) window.cancelAnimationFrame(transcriptFrameRef.current); transcriptFrameRef.current = null; streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null; recorderRef.current = null; }
-  function hasReadingEvidence() { return hasChildReadingEvidence(liveTranscript, wordStates); }
+  function hasReadingEvidence() { return hasChildReadingEvidence(liveTranscriptRef.current, wordStates); }
   function finishWithGuidedTranscript() {
     if (!hasReadingEvidence()) { setReadingState("ready"); setRecognitionStatus("ready"); toast("Read a little before finishing so Reader Leader can make a helpful report."); return; }
     const elapsed = startedAtRef.current > 0 ? Math.max(1, Math.round((Date.now() - startedAtRef.current - pausedDurationRef.current) / 1000)) : 1;
-    finishWithReport(createGuidedReport(selectedStory, liveTranscript.trim(), elapsed, assessmentMode, wordStates));
+    finishWithReport(createGuidedReport(selectedStory, liveTranscriptRef.current.trim(), elapsed, assessmentMode, wordStates));
   }
   async function sendRecording(blob: Blob) {
     const elapsed = Math.max(20, Math.round((Date.now() - startedAtRef.current - pausedDurationRef.current) / 1000));
     if (blob.size === 0 || blob.size > 4_500_000) return finishWithGuidedTranscript();
-    try { const payload = { audioBase64: arrayBufferToBase64(await blob.arrayBuffer()), audioMime: blob.type || "audio/webm", expectedText: selectedStory.text, durationSeconds: elapsed, fallbackTranscript: liveTranscript.trim() }; if (childProfile?.id) processAndSave.mutate({ ...payload, childProfileId: childProfile.id, materialId: selectedStory.materialId, storyTitle: selectedStory.title, assessmentMode, wordStates }); else processRecording.mutate(payload); } catch { finishWithGuidedTranscript(); }
+    try { const payload = { audioBase64: arrayBufferToBase64(await blob.arrayBuffer()), audioMime: blob.type || "audio/webm", expectedText: selectedStory.text, durationSeconds: elapsed, fallbackTranscript: liveTranscriptRef.current.trim() }; if (childProfile?.id) processAndSave.mutate({ ...payload, childProfileId: childProfile.id, materialId: selectedStory.materialId, storyTitle: selectedStory.title, assessmentMode, wordStates }); else processRecording.mutate(payload); } catch { finishWithGuidedTranscript(); }
   }
   function beginRecognition() {
     const Recognition = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!Recognition) { setRecognitionStatus("unavailable"); return toast("Live words are not supported by this browser. Your saved recording can still be reviewed after you finish."); }
     recognitionDesiredRef.current = true;
+    const recognitionBase = liveTranscriptRef.current;
     const recognition = new Recognition(); recognition.lang = "en-IE"; recognition.continuous = true; recognition.interimResults = true; recognition.maxAlternatives = 1;
     recognition.onresult = (event: any) => {
-      let fullText = "";
-      for (let index = 0; index < event.results.length; index += 1) fullText += `${event.results[index][0].transcript} `;
-      pendingTranscriptRef.current = fullText.trim();
+      let segmentText = "";
+      for (let index = 0; index < event.results.length; index += 1) segmentText += `${event.results[index][0].transcript} `;
+      const combinedTranscript = appendRecognitionTranscript(recognitionBase, segmentText);
+      liveTranscriptRef.current = combinedTranscript;
+      pendingTranscriptRef.current = combinedTranscript;
       if (transcriptFrameRef.current === null) transcriptFrameRef.current = window.requestAnimationFrame(() => { transcriptFrameRef.current = null; setLiveTranscript(pendingTranscriptRef.current); });
       lastRecognitionAtRef.current = Date.now(); setHesitationHint(false);
       setRecognitionStatus("listening");
@@ -246,7 +252,7 @@ export default function Home() {
     } catch { startedAtRef.current = Date.now(); setReadingState("listening"); setRecognitionStatus("unavailable"); toast("Microphone access was not granted. Guided practice remains available."); }
   }
   function pauseOrResume() { const recorder = recorderRef.current; if (readingState === "listening") { recorder?.pause(); recognitionDesiredRef.current = false; recognitionRef.current?.stop?.(); wasPausedRef.current = Date.now(); setRecognitionStatus("paused"); return setReadingState("paused"); } if (readingState === "paused") { recorder?.resume(); pausedDurationRef.current += Date.now() - wasPausedRef.current; beginRecognition(); setReadingState("listening"); } }
-  function restartReading() { shouldCompleteRef.current = false; if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop(); else cleanupRecording(); startedAtRef.current = 0; pausedDurationRef.current = 0; setLiveTranscript(""); setCoachMoment("idle"); setReadingState("ready"); setRecognitionStatus("ready"); toast("Fresh start. Take your time and enjoy the story."); }
+  function restartReading() { shouldCompleteRef.current = false; if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop(); else cleanupRecording(); startedAtRef.current = 0; pausedDurationRef.current = 0; clearLiveTranscript(); setCoachMoment("idle"); setReadingState("ready"); setRecognitionStatus("ready"); toast("Fresh start. Take your time and enjoy the story."); }
   function completeReading() {
     if (readingState === "processing") return;
     if (!hasReadingEvidence()) { toast("Start reading before finishing. Even a few words are enough to begin a helpful report."); return; }
