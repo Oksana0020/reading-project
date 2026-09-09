@@ -48,49 +48,71 @@ export function ReportDownloadButton({ childProfileId, audience, label }: { chil
   return <button className="report-action" onClick={() => void download()} disabled={report.isFetching}><Download size={15} /> {report.isFetching ? "Preparing…" : label}</button>;
 }
 
-export function SessionAudioButton({ sessionId, label = "Play recording" }: { sessionId?: number | null; label?: string }) {
-  const [playing, setPlaying] = useState(false);
-  const audioUrl = trpc.readerLeader.sessions.audioUrl.useQuery({ sessionId: sessionId ?? 1 }, { enabled: false, retry: false });
-  const play = async () => {
-    if (!sessionId) return toast("This guided session did not include an audio recording.");
-    const result = await audioUrl.refetch();
-    if (!result.data?.url) return toast(result.error?.message || "This recording is unavailable.");
-    const audio = new Audio(result.data.url);
-    setPlaying(true);
-    audio.onended = () => setPlaying(false);
-    audio.onerror = () => { setPlaying(false); toast("This recording could not be played."); };
-    try { await audio.play(); } catch { setPlaying(false); toast("Your browser blocked automatic audio playback. Try the button again."); }
-  };
-  return <button className="audio-action" onClick={() => void play()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button>;
-}
+type WordTiming = { id: string; text: string; startMs: number; endMs: number };
+type PlaybackData = { url: string; transcript: string; wordTimings: WordTiming[] };
 
-export function SessionHighlightButton({ sessionId, label = "Hear a reading highlight" }: { sessionId?: number | null; label?: string }) {
+function SessionAudioControl({ sessionId, label, highlight = false }: { sessionId?: number | null; label: string; highlight?: boolean }) {
   const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const stopTimerRef = useRef<number | null>(null);
   const audioUrl = trpc.readerLeader.sessions.audioUrl.useQuery({ sessionId: sessionId ?? 1 }, { enabled: false, retry: false });
-  const playHighlight = async () => {
-    if (!sessionId) return toast("This saved session does not include an audio recording.");
+
+  useEffect(() => () => {
+    if (stopTimerRef.current !== null) window.clearTimeout(stopTimerRef.current);
+    audioRef.current?.pause();
+  }, []);
+
+  const waitForMetadata = (audio: HTMLAudioElement) => new Promise<void>(resolve => {
+    if (audio.readyState >= 1) return resolve();
+    audio.addEventListener("loadedmetadata", () => resolve(), { once: true });
+    audio.load();
+  });
+
+  const play = async () => {
+    if (!sessionId) return toast("Your reading is still being saved. Please wait a moment, then try again.");
     const result = await audioUrl.refetch();
     const data = result.data as PlaybackData | undefined;
     if (!data?.url) return toast(result.error?.message || "This recording is unavailable.");
-    const timing = data.wordTimings[Math.min(2, Math.max(0, data.wordTimings.length - 1))];
-    const audio = new Audio(data.url);
-    setPlaying(true);
-    const stop = () => { audio.pause(); setPlaying(false); };
-    audio.onerror = () => { setPlaying(false); toast("This recording could not be played."); };
-    if (timing) {
-      audio.currentTime = timing.startMs / 1000;
-      audio.onloadedmetadata = async () => { try { await audio.play(); window.setTimeout(stop, Math.max(200, timing.endMs - timing.startMs + 150)); } catch { setPlaying(false); toast("Your browser blocked audio playback. Please try again."); } };
-      audio.load();
-    } else {
-      audio.onended = () => setPlaying(false);
-      try { await audio.play(); } catch { setPlaying(false); toast("Your browser blocked audio playback. Please try again."); }
+    const audio = audioRef.current;
+    if (!audio) return toast("The recording player is preparing. Please try again.");
+    const resolvedSource = new URL(data.url, window.location.href).href;
+    if (audio.src !== resolvedSource) {
+      audio.src = data.url;
+      await waitForMetadata(audio);
+    }
+    if (stopTimerRef.current !== null) window.clearTimeout(stopTimerRef.current);
+    const timing = highlight ? data.wordTimings[Math.min(2, Math.max(0, data.wordTimings.length - 1))] : undefined;
+    audio.currentTime = timing ? timing.startMs / 1000 : 0;
+    audio.onended = () => setPlaying(false);
+    audio.onerror = () => { setPlaying(false); toast("This recording could not be played. Please try again."); };
+    try {
+      await audio.play();
+      setPlaying(true);
+      if (timing) {
+        const stopAt = Math.min(timing.endMs / 1000 + 0.15, Number.isFinite(audio.duration) ? audio.duration : timing.endMs / 1000 + 0.15);
+        stopTimerRef.current = window.setTimeout(() => {
+          audio.pause();
+          audio.currentTime = stopAt;
+          setPlaying(false);
+          stopTimerRef.current = null;
+        }, Math.max(200, timing.endMs - timing.startMs + 150));
+      }
+    } catch {
+      setPlaying(false);
+      toast("Your browser could not start the recording. Check sound is enabled, then try again.");
     }
   };
-  return <button className="audio-action best-moment-action" onClick={() => void playHighlight()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button>;
+
+  return <><audio ref={audioRef} preload="metadata" data-testid={highlight ? "reading-highlight-audio" : "session-audio"} /><button className={`audio-action ${highlight ? "best-moment-action" : ""}`} onClick={() => void play()} disabled={audioUrl.isFetching || playing}><Play size={14} fill="currentColor" /> {audioUrl.isFetching ? "Loading…" : playing ? "Playing…" : label}</button></>;
 }
 
-type WordTiming = { id: string; text: string; startMs: number; endMs: number };
-type PlaybackData = { url: string; transcript: string; wordTimings: WordTiming[] };
+export function SessionAudioButton({ sessionId, label = "Play recording" }: { sessionId?: number | null; label?: string }) {
+  return <SessionAudioControl sessionId={sessionId} label={label} />;
+}
+
+export function SessionHighlightButton({ sessionId, label = "Hear a reading highlight" }: { sessionId?: number | null; label?: string }) {
+  return <SessionAudioControl sessionId={sessionId} label={label} highlight />;
+}
 
 export function SessionTranscriptPlayer({ sessionId }: { sessionId?: number | null }) {
   const [playback, setPlayback] = useState<PlaybackData | null>(null);

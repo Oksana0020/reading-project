@@ -297,7 +297,7 @@ export async function mayAccessChildProfile(viewer: AuthenticatedReader, childPr
   return false;
 }
 
-export async function createReadingMaterial(input: { teacherUserId: number; title: string; readingLevel: string; sourceText: string; sourceFilename?: string; storageKey?: string }) {
+export async function createReadingMaterial(input: { teacherUserId: number; title: string; readingLevel: string; summary?: string; sourceText: string; sourceFilename?: string; storageKey?: string }) {
   const db = await requireDb();
   await db.insert(readingMaterials).values(input);
   const [material] = await db.select().from(readingMaterials).where(and(eq(readingMaterials.teacherUserId, input.teacherUserId), eq(readingMaterials.title, input.title))).orderBy(desc(readingMaterials.id)).limit(1);

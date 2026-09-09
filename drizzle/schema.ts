@@ -136,6 +136,7 @@ export const readingMaterials = mysqlTable("readingMaterials", {
   teacherUserId: int("teacherUserId").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: varchar("title", { length: 180 }).notNull(),
   readingLevel: varchar("readingLevel", { length: 80 }).notNull(),
+  summary: text("summary"),
   sourceText: text("sourceText").notNull(),
   sourceFilename: varchar("sourceFilename", { length: 255 }),
   storageKey: varchar("storageKey", { length: 512 }),

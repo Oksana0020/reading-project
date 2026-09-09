@@ -161,6 +161,7 @@ export const readerLeaderRouter = router({
     create: protectedProcedure.input(z.object({
       title: z.string().trim().min(3).max(180),
       readingLevel: z.string().trim().min(2).max(80),
+      summary: z.string().trim().max(480).optional(),
       sourceText: z.string().trim().min(80).max(8000),
       sourceFilename: z.string().trim().min(1).max(255).optional(),
       sourceFileBase64: z.string().max(7_000_000).optional(),
@@ -176,7 +177,7 @@ export const readerLeaderRouter = router({
         const stored = await storagePut(`reader-leader/materials/${ctx.user.id}/${safeFilename(input.sourceFilename)}`, bytes, input.sourceFileMime || "text/plain");
         storageKey = stored.key;
       }
-      return createReadingMaterial({ teacherUserId: ctx.user.id, title: input.title, readingLevel: input.readingLevel, sourceText: input.sourceText, sourceFilename: input.sourceFilename, storageKey });
+      return createReadingMaterial({ teacherUserId: ctx.user.id, title: input.title, readingLevel: input.readingLevel, summary: input.summary, sourceText: input.sourceText, sourceFilename: input.sourceFilename, storageKey });
     }),
     generateExercises: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
@@ -194,6 +195,15 @@ export const readerLeaderRouter = router({
       const saved = await saveGeneratedExercises(material.id, exerciseSet, "gpt-5-mini");
       return { material, exercise: saved };
     }),
+    saveExerciseDraft: protectedProcedure.input(z.object({ materialId: z.number().int().positive(), exerciseSet: exerciseSetSchema })).mutation(async ({ ctx, input }) => {
+      requireTeacher(ctx.user.role);
+      const materials = await listTeacherMaterials(ctx.user.id);
+      const material = materials.find(item => item.id === input.materialId);
+      if (!material) throw new TRPCError({ code: "FORBIDDEN", message: "This material is not available to your class." });
+      const exerciseSet = assertSafeExerciseSet(input.exerciseSet);
+      const exercise = await saveGeneratedExercises(material.id, exerciseSet, "teacher-reviewed draft");
+      return { material, exercise };
+    }),
     approve: protectedProcedure.input(z.object({ materialId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       requireTeacher(ctx.user.role);
       await approveExercises(ctx.user.id, input.materialId);
@@ -210,6 +220,7 @@ export const readerLeaderRouter = router({
       audioBase64: z.string().min(1).max(6_000_000),
       audioMime: z.string().optional(),
       durationSeconds: z.number().int().min(10).max(900),
+      fallbackTranscript: z.string().max(8000).optional().default(""),
       assessmentMode: assessmentModeSchema.default("ASSISTED_PRACTICE"),
       wordStates: z.array(wordStateSchema).max(1000).optional(),
     })).mutation(async ({ ctx, input }) => {
@@ -224,17 +235,22 @@ export const readerLeaderRouter = router({
         ? "Transcribe a child reading aloud in Irish English. Preserve the words as spoken, including regional pronunciation. Do not correct mistakes or convert dialect features."
         : "Transcribe an English-speaking child reading aloud. Preserve the words as spoken. Do not correct mistakes.";
       const { transcribeAudioBytes } = await import("../_core/voiceTranscription");
-      const [stored, transcription] = await Promise.all([
+      const [storedResult, transcriptionResult] = await Promise.allSettled([
         storagePut(`reader-leader/recordings/${ctx.user.id}/session-${Date.now()}.${extension}`, bytes, mimeType),
         transcribeAudioBytes({ audioBuffer: bytes, mimeType, language: "en", prompt: transcriptionPrompt }),
       ]);
-      if ("error" in transcription) throw new Error(transcription.error);
-      const analysis = analyseReadingText(input.expectedText, transcription.text, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport, irishVariantContext.variants);
+      if (storedResult.status === "rejected") throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Your recording could not be saved. Please try again." });
+      const stored = storedResult.value;
+      const transcription = transcriptionResult.status === "fulfilled" && !("error" in transcriptionResult.value) ? transcriptionResult.value : null;
+      const transcriptionStatus = transcription ? "transcribed" as const : "guided" as const;
+      const transcript = transcription?.text || input.fallbackTranscript.trim();
+      if (!transcript) throw new TRPCError({ code: "BAD_REQUEST", message: "Read a few words before finishing so Reader Leader can prepare a report." });
+      const analysis = analyseReadingText(input.expectedText, transcript, input.durationSeconds, input.assessmentMode, input.wordStates, learnerSettings.languageSupport, irishVariantContext.variants);
       const interventions = analysis.events.filter(event => event.eventType !== "correct").slice(0, 5).map(event => ({ word: event.expectedWord, action: event.action === "teacher_review" ? "teacher_review" as const : event.action === "stay_silent" ? "stay_silent" as const : "prompt" as const, note: event.eventType === "dialect_variation" ? "Irish English variation provisionally accepted — please confirm this reading moment from the saved audio." : event.action === "teacher_review" ? "Possible pronunciation variation — flagged for teacher review. The coach stayed silent." : "Try that word again when you are ready." }));
-      const wordTimings = buildWordTimings(transcription.text, analysis.durationSeconds, transcription.segments);
+      const wordTimings = buildWordTimings(transcript, analysis.durationSeconds, transcription?.segments);
       const session = await saveReadingSession({ childProfileId: input.childProfileId, materialId: input.materialId, storyTitle: input.storyTitle, transcript: analysis.transcript, accuracy: analysis.accuracy, wordsCorrectPerMinute: analysis.pace, durationSeconds: analysis.durationSeconds, audioStorageKey: stored.key, assessmentMode: input.assessmentMode, languageSupport: learnerSettings.languageSupport, practiceWords: analysis.practiceWords, interventions, wordStates: analysis.wordStates, wordTimings });
       await createProvisionalMatchReviews({ sessionId: session.id, childProfileId: input.childProfileId, classId: irishVariantContext.classId, matches: analysis.events.filter(event => event.provisionalIrishEnglish && event.recognisedWord).map(event => ({ expectedWord: event.expectedWord, recognisedWord: event.recognisedWord!, source: event.variantSource })) });
-      return { session, analysis };
+      return { session, analysis, transcriptionStatus };
     }),
     save: protectedProcedure.input(z.object({
       childProfileId: z.number().int().positive(),

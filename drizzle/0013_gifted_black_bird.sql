@@ -1,0 +1,1 @@
+ALTER TABLE `readingMaterials` ADD `summary` text;
