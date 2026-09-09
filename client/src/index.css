@@ -232,6 +232,10 @@ button:focus-visible, a:focus-visible { outline: 3px solid var(--yellow); outlin
 .reader-text { padding: clamp(30px, 5vw, 65px) clamp(24px, 6vw, 72px); min-height: 335px; font-family: "Manrope", sans-serif; font-size: clamp(28px, 4vw, 51px); letter-spacing: -2.2px; line-height: 1.48; font-weight: 800; }
 .reader-word { display: inline; position: relative; margin-right: .13em; padding: .05em .1em; border-radius: 7px; transition: background .2s ease, color .2s ease; white-space: pre-wrap; }
 .reader-word.current { background: #fcd34d; text-decoration: underline 3px #d97706; text-underline-offset: .14em; }.reader-word.correct,.reader-word.done { color: #2563eb; }.reader-word.incorrect { background: #ffe4e6; color: #be123c; text-decoration: underline 3px #f43f5e; text-underline-offset: .14em; }.reader-word.retried_correct { color: #2563eb; }.retry-check { position: absolute; top: -.42em; right: -.18em; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: #22c55e; color: white; }
+.reader-word.missed-word { border: 0; font: inherit; cursor: pointer; }
+.reader-word.missed-word::after { content: "Tap to hear"; display: block; margin-top: .25em; color: #9f1239; font-family: "DM Mono", monospace; font-size: .28em; font-weight: 900; letter-spacing: .02em; line-height: 1; text-decoration: none; }
+.reader-word.missed-word:hover, .reader-word.missed-word:focus-visible { background: #fecdd3; box-shadow: 0 0 0 3px rgba(244, 63, 94, .16); outline: none; }
+.reader-word.missed-word.speaking { background: #fde68a; color: var(--ink); text-decoration-color: #d97706; }
 .session-controls { border-top: 1px solid #e4e8ef; padding: 16px; display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 10px; background: #fcfdfd; }
 .record-button { width: 52px; height: 52px; display: grid; place-items: center; border: 2px solid var(--ink); border-radius: 50%; background: var(--red); color: white; box-shadow: 3px 3px 0 var(--ink); }
 .record-button.listening { background: var(--blue); box-shadow: 0 0 0 6px rgba(35, 80, 197, .13); }
